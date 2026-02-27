@@ -1,6 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -8,12 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Core\" />
-    <Folder Include="Interfaces\" />
-    <Folder Include="Models\" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="libse" Version="4.1.0-alpha8" />
+    <Reference Include="NLog">
+      <HintPath>..\..\..\..\..\.nuget\packages\nlog\6.1.0\lib\netstandard2.1\NLog.dll</HintPath>
+    </Reference>
   </ItemGroup>
 </Project>
