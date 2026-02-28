@@ -2,13 +2,11 @@ using ASTranscriber.Core;
 using FFMpegCore;
 using FFMpegCore.Enums;
 using Microsoft.Extensions.Logging;
-using Nikse.SubtitleEdit.Core.Common;
 using NLog.Extensions.Logging;
 using PathLib;
 using ShellProgressBar;
 using Subtitles;
 using Whisper.net;
-using Whisper.net.Ggml;
 
 namespace ASTranscriber.Transcription.Whisper;
 
@@ -24,6 +22,7 @@ public class WhisperTranscriber : ITranscriber
         .CreateLogger<WhisperTranscriber>();
 
     private readonly List<string> _allowedExtensions = [".wav", ".mp3", ".opus"];
+    
 
     public WhisperTranscriber(IPath inputDirPath, IPath outputDirPath, string whisperModel)
     {
@@ -42,6 +41,7 @@ public class WhisperTranscriber : ITranscriber
 
         if (!whisperModelPath.IsFile())
         {
+            var whisperModelDownloader = new WhisperModelDownloader();
             _logger.LogInformation($"Downloading \"{whisperModelPath}\"");
             try
             {
@@ -49,7 +49,7 @@ public class WhisperTranscriber : ITranscriber
                     "Downloading",
                     _childProgressBarOptions
                 );
-                var downloadTask = DownloadWhisperModel(whisperModelPath);
+                var downloadTask = whisperModelDownloader.DownloadWhisperModel(whisperModelPath);
                 downloadTask.Wait();
                 pb.Finished();
             }
@@ -191,45 +191,6 @@ public class WhisperTranscriber : ITranscriber
         childPb.Finished();
 
         return outputPath;
-    }
-
-    private async Task DownloadWhisperModel(IPath modelDir)
-    {
-        GgmlType ggmlType;
-        QuantizationType quantizationType;
-        switch (modelDir.BasenameWithoutExtensions)
-        {
-            case "small-q5_1":
-                ggmlType = GgmlType.Small;
-                quantizationType = QuantizationType.Q5_1;
-                break;
-            case "large-v3-q5_0":
-                ggmlType = GgmlType.LargeV3;
-                quantizationType = QuantizationType.Q5_0;
-                break;
-            case "large-v3-turbo-q8_0":
-                ggmlType = GgmlType.LargeV3Turbo;
-                quantizationType = QuantizationType.Q8_0;
-                break;
-            default:
-                throw new ArgumentException(
-                    $"Unknown model name \"{modelDir.BasenameWithoutExtensions}\""
-                );
-        }
-
-        if (Environment.GetEnvironmentVariable("DRY_RUN") == "1")
-        {
-            _logger.LogDebug("Dry running model download\n");
-            await Task.Delay(30 * 1000);
-            return;
-        }
-
-        await using var modelStream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
-            ggmlType,
-            quantizationType
-        );
-        await using var fileWriter = modelDir.Open(FileMode.Create);
-        await modelStream.CopyToAsync(fileWriter);
     }
 
     private class TranscriptionJob(IPath filePath)
