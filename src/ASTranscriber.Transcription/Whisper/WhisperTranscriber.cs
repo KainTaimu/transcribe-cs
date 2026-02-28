@@ -21,7 +21,7 @@ public class WhisperTranscriber : ITranscriber
         .Create(builder => builder.SetMinimumLevel(LogLevel.Debug).AddNLog())
         .CreateLogger<WhisperTranscriber>();
 
-    private readonly List<string> _allowedExtensions = [".wav", ".mp3", ".opus"];
+    private readonly List<string> _allowedExtensions = [".wav", ".mp3", ".opus", ".m4a"];
 
     public WhisperTranscriber(IPath inputDirPath, IPath outputDirPath, string whisperModel)
     {
