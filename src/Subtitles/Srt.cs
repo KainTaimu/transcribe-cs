@@ -4,14 +4,14 @@ public class Srt : ISubtitles
 {
     public readonly List<SrtLine> Lines = [];
     public int LineCount => Lines.Count;
-    
+
     public IEnumerator<SrtLine> GetEnumerator() => Lines.GetEnumerator();
-    
+
     public SrtLine GetLine(int index) => Lines[index];
 
     public void AddLine(string text, string start, string end)
     {
-        var newLine = new SrtLine(text, LineCount+1, start, end);
+        var newLine = new SrtLine(text, LineCount + 1, start, end);
         Lines.Add(newLine);
     }
 

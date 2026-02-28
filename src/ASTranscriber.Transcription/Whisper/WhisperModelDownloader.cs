@@ -5,9 +5,8 @@ namespace ASTranscriber.Transcription.Whisper;
 
 public class WhisperModelDownloader
 {
-    public WhisperModelDownloader()
-    {
-    }
+    public WhisperModelDownloader() { }
+
     public async Task DownloadWhisperModel(IPath modelDir)
     {
         GgmlType ggmlType;

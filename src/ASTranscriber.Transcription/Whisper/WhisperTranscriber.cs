@@ -22,7 +22,6 @@ public class WhisperTranscriber : ITranscriber
         .CreateLogger<WhisperTranscriber>();
 
     private readonly List<string> _allowedExtensions = [".wav", ".mp3", ".opus"];
-    
 
     public WhisperTranscriber(IPath inputDirPath, IPath outputDirPath, string whisperModel)
     {
@@ -142,15 +141,19 @@ public class WhisperTranscriber : ITranscriber
 
         // TODO: Use ISubtitles
         var srt = new Srt();
-        
+
         await foreach (var result in processor.ProcessAsync(fileStream))
         {
             progress.Report(result.End / max);
             pb.WriteLine($"[{result.Start:g}->{result.End:g}] {result.Text}");
             srt.AddLine(result.Text, result.Start.ToString(), result.End.ToString());
         }
-        
-        srt.WriteFile(_outputDirectory.Join([$"{Path.GetFileNameWithoutExtension(wavFileName)}.srt"]).ToString());
+
+        srt.WriteFile(
+            _outputDirectory
+                .Join([$"{Path.GetFileNameWithoutExtension(wavFileName)}.srt"])
+                .ToString()
+        );
 
         return null;
     }
