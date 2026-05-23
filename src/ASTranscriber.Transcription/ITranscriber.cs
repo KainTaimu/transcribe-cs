@@ -1,21 +1,16 @@
 using FluentResults;
 using PathLib;
+using Spectre.Console;
 
 namespace ASTranscriber.Transcription;
 
 public interface ITranscriber
 {
-    /// <summary>
-    /// Begin transcription of a single audio file.
-    /// </summary>
-    /// <param name="inputFile">Path to the audio file to transcribe</param>
-    /// <param name="outputDirectory">Path to the output directory for results</param>
-    /// <param name="modelPath">Path to the Whisper model file</param>
-    /// <returns>The exit code. Zero meaning success.</returns>
-    public Result Start(IPath inputFile, IPath outputDirectory, IPath modelPath);
+    public Result<IPath> Start(
+        IPath inputFile,
+        IPath outputDirectory,
+        ProgressContext? progressContext = null
+    );
 
-    /// <summary>
-    /// Get the path of the resulting transcripted file in SRT format
-    /// </summary>
     public IPath? GetTranscriptionSrt();
 }

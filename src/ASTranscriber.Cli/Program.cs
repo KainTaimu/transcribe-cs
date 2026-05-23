@@ -1,10 +1,13 @@
 using System.CommandLine;
 using System.Runtime.InteropServices;
+using ASTranscriber.Core.Extensions;
 using ASTranscriber.Transcription.Whisper;
+using ASTranscriber.Translation;
 using Microsoft.Extensions.Logging;
 using NLog.Extensions.Logging;
 using PathLib;
 using Spectre.Console;
+using Spectre.Console.Rendering;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 using MLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
@@ -49,7 +52,7 @@ public static class Program
         var translationOption = new Option<TranslationMode>("--translation-mode", "-tr")
         {
             Description = "Which translation mode to use",
-            DefaultValueFactory = _ => TranslationMode.Whisper,
+            DefaultValueFactory = _ => TranslationMode.Sugoi,
         };
 
         var whisperModelOption = new Option<string>("--whisper-model")
@@ -72,12 +75,15 @@ public static class Program
         {
             var inputDir = parseResult.GetRequiredValue(inputOption);
             var outputDir = parseResult.GetRequiredValue(outputOption);
+            var transcriptionChoice = parseResult.GetRequiredValue(transcriptionOption);
+            var translationChoice = parseResult.GetRequiredValue(translationOption);
             var verbose = parseResult.GetRequiredValue(verboseOption);
             var whisperModel = parseResult.GetRequiredValue(whisperModelOption);
 
             var factory = new PathFactory();
             var inputDirPath = factory.Create(inputDir);
             var outputDirPath = factory.Create(outputDir);
+            var whisperModelPath = factory.Create(whisperModel);
 
             if (!inputDirPath.IsDir())
                 inputDirPath.Mkdir();
@@ -89,32 +95,74 @@ public static class Program
             Logger.LogDebug($"Input dir: {inputDir}");
             Logger.LogDebug($"Output dir: {outputDir}");
 
-            var transcriber = new WhisperTranscriber();
-            var modelPath = factory.Create(whisperModel);
-
-            foreach (var entry in inputDirPath.ListDir().OrderBy(x => x.Basename))
+            var transcriber = transcriptionChoice switch
             {
-                if (!entry.IsFile())
-                    continue;
+                // TODO: Pass an enum instead of an IPath to WhisperTranscriber constructor
+                TranscriptionMode.Whisper => new WhisperTranscriber(whisperModelPath),
+                _ => throw new ArgumentOutOfRangeException(),
+            };
+            var translator = translationChoice switch
+            {
+                TranslationMode.Sugoi => new SugoiTranslator(),
+                TranslationMode.Whisper => throw new NotImplementedException(),
+                _ => throw new ArgumentOutOfRangeException(),
+            };
 
-                var supportedExtensions = new List<string> { ".wav", ".mp3", ".opus", ".m4a" };
-                if (!supportedExtensions.Contains(entry.Extension))
+            AnsiConsole
+                .Progress()
+                .Columns(
+                    new TaskDescriptionColumn() { Alignment = Justify.Left },
+                    new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
+                    new CountColumn() { Style = Color.Blue },
+                    new ElapsedTimeColumn() { Style = Style.Plain },
+                    new SquareBracedRemainingTimeColumn() { Style = Style.Plain }
+                )
+                .HideCompleted(true)
+                .AutoClear(true)
+                .Start(ctx =>
                 {
-                    Logger.LogWarning($"Ignoring unsupported file: {entry.Filename}");
-                    continue;
-                }
+                    var entries = inputDirPath.ListDir().OrderBy(x => x.Basename).ToArray();
+                    var primaryTask = ctx.AddTask($"...", maxValue: entries.Length);
+                    foreach (var entry in entries)
+                    {
+                        if (!entry.IsFile())
+                            continue;
 
-                var result = transcriber.Start(entry, outputDirPath, modelPath);
-                if (result.IsFailed)
-                {
-                    Logger.LogError(
-                        "Failed to transcribe {EntryFilename}: {Join}",
-                        entry.Filename,
-                        string.Join(", ", result.Errors.Select(e => e.Message))
-                    );
-                    return 1;
-                }
-            }
+                        var supportedExtensions = new List<string>
+                        {
+                            ".wav",
+                            ".mp3",
+                            ".opus",
+                            ".m4a",
+                        };
+                        if (!supportedExtensions.Contains(entry.Extension))
+                        {
+                            Logger.LogWarning($"Ignoring unsupported file: {entry.Filename}");
+                            continue;
+                        }
+
+                        primaryTask.Description =
+                            $"{entry.BasenameWithoutExtensions.Ellipsize(16)}";
+
+                        var srtResult = transcriber.Start(entry, outputDirPath, ctx);
+                        if (srtResult.IsFailed)
+                        {
+                            Logger.LogError(
+                                "Failed to transcribe {EntryFilename}: {Join}",
+                                entry.Filename,
+                                string.Join(", ", srtResult.Errors.Select(e => e.Message))
+                            );
+                            primaryTask.Increment(1);
+                            continue;
+                        }
+
+                        var srt = srtResult.Value;
+
+                        srtResult = translator.Start(srt, ctx);
+
+                        primaryTask.Increment(1);
+                    }
+                });
 
             return 0;
         });
@@ -137,14 +185,71 @@ public static class Program
         return parseResult.Invoke();
     }
 
-    public enum TranscriptionMode
+    private enum TranscriptionMode
     {
         Whisper,
     }
 
-    public enum TranslationMode
+    private enum TranslationMode
     {
         Whisper,
         Sugoi,
+    }
+}
+
+public sealed class CountColumn : ProgressColumn
+{
+    public string? Unit { get; set; }
+
+    /// <summary>
+    /// Gets or sets the style of the remaining text.
+    /// </summary>
+    public Style Style { get; set; } = Color.Blue;
+
+    public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
+    {
+        var current = (long)task.Value;
+        var total = (long)task.MaxValue;
+
+        var text = total > 0 ? $"{current}/{total}" : $"{current}/?";
+
+        if (Unit is not null)
+            text += $" {Unit}";
+
+        return new Markup($"{text}", Style);
+    }
+}
+
+public sealed class SquareBracedRemainingTimeColumn : ProgressColumn
+{
+    /// <inheritdoc/>
+    protected override bool NoWrap => true;
+
+    /// <summary>
+    /// Gets or sets the style of the remaining time text.
+    /// </summary>
+    public Style Style { get; set; } = Color.Blue;
+
+    /// <inheritdoc/>
+    public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
+    {
+        var remaining = task.RemainingTime;
+        if (remaining == null)
+        {
+            return new Markup("[[--:--:--]]");
+        }
+
+        if (remaining.Value.TotalHours > 99 || task.IsIndeterminate)
+        {
+            return new Markup("[[**:**:**]]");
+        }
+
+        return new Text($"[{remaining.Value:hh\\:mm\\:ss}]", Style);
+    }
+
+    /// <inheritdoc/>
+    public override int? GetColumnWidth(RenderOptions options)
+    {
+        return 10;
     }
 }

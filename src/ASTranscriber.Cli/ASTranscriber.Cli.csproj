@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ASTranscriber.Transcription\ASTranscriber.Transcription.csproj" />
+    <ProjectReference Include="..\ASTranscriber.Translation\ASTranscriber.Translation.csproj" />
   </ItemGroup>
 
   <ItemGroup>
