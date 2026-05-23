@@ -1,3 +1,4 @@
+using FluentResults;
 using PathLib;
 
 namespace ASTranscriber.Transcription;
@@ -8,7 +9,7 @@ public interface ITranscriber
     /// Begin transcription.
     /// </summary>
     /// <returns>The exit code. Zero meaning success.</returns>
-    public int Start();
+    public Result Start();
 
     /// <summary>
     /// Get the path of the resulting transcripted file in SRT format

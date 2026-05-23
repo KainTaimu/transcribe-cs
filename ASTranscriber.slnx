@@ -7,5 +7,6 @@
         <Project Path="src/ASTranscriber.Utils/ASTranscriber.Utils.csproj" />
         <Project Path="src/Subtitles/Subtitles.csproj" />
         <Project Path="src\ASTranscriber.Transcription\ASTranscriber.Transcription.csproj" />
+        <Project Path="src/VadDotNet/VadDotNet.csproj" />
     </Folder>
 </Solution>

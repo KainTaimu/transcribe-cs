@@ -1,6 +1,7 @@
 using ASTranscriber.Core;
 using FFMpegCore;
 using FFMpegCore.Enums;
+using FluentResults;
 using Microsoft.Extensions.Logging;
 using NLog.Extensions.Logging;
 using PathLib;
@@ -69,7 +70,7 @@ public class WhisperTranscriber : ITranscriber
         _modelPath = whisperModelPath;
     }
 
-    public int Start()
+    public Result Start()
     {
         var count = 1;
         var len = 0;
@@ -96,33 +97,52 @@ public class WhisperTranscriber : ITranscriber
             pb.Message =
                 $"[{count++}/{len}] Processing \"{Path.GetRelativePath(Environment.CurrentDirectory, job.ToString())}\"";
 
+            var cts = new CancellationTokenSource();
+            ConsoleCancelEventHandler onExit = (_, e) =>
+            {
+                e.Cancel = true; // Don't kill the process immediately
+                cts.Cancel();
+            };
             try
             {
+                Console.CancelKeyPress += onExit;
+
                 var wav = ToWhisperSupportedWav(
                     Path.GetRelativePath(Environment.CurrentDirectory, job.ToString()),
                     pb
                 );
+                if (wav.IsFailed)
+                {
+                    throw new Exception(wav.Errors.ToString());
+                }
 
-                var whisperTask = RunWhisper(wav, _modelPath.ToString(), pb);
-                whisperTask.Wait();
+                var whisperTask = RunWhisper(wav.Value, _modelPath.ToString(), pb, cts.Token);
+                whisperTask.Wait(cts.Token);
             }
+            catch (OperationCanceledException e) { }
             catch (Exception e)
             {
-                pb.WriteErrorLine("FAILED");
+                pb.WriteErrorLine("FAILED" + e.Message);
                 _logger.LogError(e, "FAILURE ");
+            }
+            finally
+            {
+                Console.CancelKeyPress -= onExit;
+                cts.Dispose();
             }
 
             pb.Tick();
         }
         _logger.LogInformation("Done.");
 
-        return 0;
+        return Result.Ok();
     }
 
     private async Task<WhisperTranscriptionException?> RunWhisper(
         string wavFileName,
         string modelPath,
-        ProgressBar pb
+        ProgressBar pb,
+        CancellationToken ct
     )
     {
         using var whisperFactory = WhisperFactory.FromPath(modelPath);
@@ -130,7 +150,6 @@ public class WhisperTranscriber : ITranscriber
             .CreateBuilder()
             .WithLanguage("auto")
             .WithAudioContextSize(0)
-            .WithNoSpeechThreshold(1e-3f)
             .WithTemperature(0)
             .Build();
         await using var fileStream = File.OpenRead(wavFileName);
@@ -142,8 +161,13 @@ public class WhisperTranscriber : ITranscriber
         // TODO: Use ISubtitles
         var srt = new Srt();
 
-        await foreach (var result in processor.ProcessAsync(fileStream))
+        await foreach (var result in processor.ProcessAsync(fileStream, ct))
         {
+            if (ct.IsCancellationRequested)
+            {
+                _logger.LogError("Cancelling.");
+                return null;
+            }
             progress.Report(result.End / max);
             pb.WriteLine($"[{result.Start:g}->{result.End:g}] {result.Text}");
             srt.AddLine(result.Text, result.Start.ToString(), result.End.ToString());
@@ -163,15 +187,14 @@ public class WhisperTranscriber : ITranscriber
         throw new NotImplementedException();
     }
 
-    public string? ToWhisperSupportedWav(string path, ProgressBar pb)
+    public Result<string> ToWhisperSupportedWav(string path, ProgressBar pb)
     {
         _logger.LogInformation($"Converting \"{path}\" to whisper supported format");
 
         var primaryAudioStream = FFProbe.Analyse(path).PrimaryAudioStream;
         if (primaryAudioStream is null)
         {
-            _logger.LogError($"Could not convert. Lacks a primary audio stream");
-            return null;
+            return Result.Fail("Could not convert. Lacks a primary audio stream");
         }
 
         var outputPath = Path.GetTempFileName();
@@ -193,7 +216,7 @@ public class WhisperTranscriber : ITranscriber
 
         childPb.Finished();
 
-        return outputPath;
+        return Result.Ok(outputPath);
     }
 
     private class TranscriptionJob(IPath filePath)

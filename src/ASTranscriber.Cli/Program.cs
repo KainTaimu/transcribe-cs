@@ -93,7 +93,7 @@ public static class Program
             Logger.LogDebug($"Output dir: {outputDir}");
 
             var transcriber = new WhisperTranscriber(inputDirPath, outputDirPath, whisperModel);
-            return transcriber.Start();
+            return transcriber.Start().IsSuccess ? 0 : 1;
         });
 
         var parseResult = rootCommand.Parse(args);
