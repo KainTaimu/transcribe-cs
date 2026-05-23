@@ -30,8 +30,9 @@ public static class WhisperModels
 
     public static (GgmlType, QuantizationType) GetModel(string modelName)
     {
-        var match = QuantizationToQuantizationType
-            .FirstOrDefault(kvp => modelName.EndsWith($"-{kvp.Key}", StringComparison.OrdinalIgnoreCase));
+        var match = QuantizationToQuantizationType.FirstOrDefault(kvp =>
+            modelName.EndsWith($"-{kvp.Key}", StringComparison.OrdinalIgnoreCase)
+        );
 
         var quantization = match.Key is not null ? match.Value : QuantizationType.NoQuantization;
         var baseName = match.Key is not null ? modelName[..^(match.Key.Length + 1)] : modelName;

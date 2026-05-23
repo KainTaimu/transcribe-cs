@@ -17,13 +17,11 @@ public class Srt : ISubtitles
 
     public void WriteFile(string filename)
     {
-        var file = File.OpenWrite(filename);
+        using var file = File.OpenWrite(filename);
         using var writer = new StreamWriter(file);
         foreach (var line in Lines)
         {
             writer.WriteLine(line);
         }
-        writer.Close();
-        file.Close();
     }
 }

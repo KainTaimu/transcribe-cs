@@ -1,12 +1,10 @@
-﻿using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace VADdotnet;
-
 
 public class SileroVadOnnxModel : IDisposable
 {
@@ -23,7 +21,7 @@ public class SileroVadOnnxModel : IDisposable
         {
             InterOpNumThreads = 1,
             IntraOpNumThreads = 1,
-            EnableCpuMemArena = true
+            EnableCpuMemArena = true,
         };
 
         session = new InferenceSession(modelPath, sessionOptions);
@@ -88,7 +86,9 @@ public class SileroVadOnnxModel : IDisposable
 
         if (!SAMPLE_RATES.Contains(sr))
         {
-            throw new ArgumentException($"Only supports sample rates {string.Join(", ", SAMPLE_RATES)} (or multiples of 16000)");
+            throw new ArgumentException(
+                $"Only supports sample rates {string.Join(", ", SAMPLE_RATES)} (or multiples of 16000)"
+            );
         }
 
         if (((float)sr) / x[0].Length > 31.25)
@@ -128,7 +128,9 @@ public class SileroVadOnnxModel : IDisposable
 
         if (contextSize > cols)
         {
-            throw new ArgumentException("contextSize cannot be greater than the number of columns in the array.");
+            throw new ArgumentException(
+                "contextSize cannot be greater than the number of columns in the array."
+            );
         }
 
         float[][] result = new float[rows][];
@@ -151,7 +153,9 @@ public class SileroVadOnnxModel : IDisposable
 
         if (x[0].Length != numberSamples)
         {
-            throw new ArgumentException($"Provided number of samples is {x[0].Length} (Supported values: 256 for 8000 sample rate, 512 for 16000)");
+            throw new ArgumentException(
+                $"Provided number of samples is {x[0].Length} (Supported values: 256 for 8000 sample rate, 512 for 16000)"
+            );
         }
 
         int batchSize = x.Length;
@@ -182,11 +186,20 @@ public class SileroVadOnnxModel : IDisposable
         x = Concatenate(context, x);
 
         var inputs = new List<NamedOnnxValue>
-            {
-                NamedOnnxValue.CreateFromTensor("input", new DenseTensor<float>(x.SelectMany(a => a).ToArray(), [x.Length, x[0].Length])),
-                NamedOnnxValue.CreateFromTensor("sr", new DenseTensor<long>(new[] { (long)sr }, [1])),
-                NamedOnnxValue.CreateFromTensor("state", new DenseTensor<float>(state.SelectMany(a => a.SelectMany(b => b)).ToArray(), [state.Length, state[0].Length, state[0][0].Length]))
-            };
+        {
+            NamedOnnxValue.CreateFromTensor(
+                "input",
+                new DenseTensor<float>(x.SelectMany(a => a).ToArray(), [x.Length, x[0].Length])
+            ),
+            NamedOnnxValue.CreateFromTensor("sr", new DenseTensor<long>(new[] { (long)sr }, [1])),
+            NamedOnnxValue.CreateFromTensor(
+                "state",
+                new DenseTensor<float>(
+                    state.SelectMany(a => a.SelectMany(b => b)).ToArray(),
+                    [state.Length, state[0].Length, state[0][0].Length]
+                )
+            ),
+        };
 
         using var outputs = session.Run(inputs);
         var output = outputs.First(o => o.Name == "output").AsTensor<float>();

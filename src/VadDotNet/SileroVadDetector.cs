@@ -17,18 +17,28 @@ public class SileroVadDetector
     private readonly float _minSilenceSamplesAtMaxSpeech;
     private int _audioLengthSamples;
     private const float THRESHOLD_GAP = 0.15f;
+
     // ReSharper disable once InconsistentNaming
     private const int SAMPLING_RATE_8K = 8000;
+
     // ReSharper disable once InconsistentNaming
     private const int SAMPLING_RATE_16K = 16000;
 
-    public SileroVadDetector(string onnxModelPath, float threshold, int samplingRate,
-        int minSpeechDurationMs, float maxSpeechDurationSeconds,
-        int minSilenceDurationMs, int speechPadMs)
+    public SileroVadDetector(
+        string onnxModelPath,
+        float threshold,
+        int samplingRate,
+        int minSpeechDurationMs,
+        float maxSpeechDurationSeconds,
+        int minSilenceDurationMs,
+        int speechPadMs
+    )
     {
         if (samplingRate != SAMPLING_RATE_8K && samplingRate != SAMPLING_RATE_16K)
         {
-            throw new ArgumentException("Sampling rate not support, only available for [8000, 16000]");
+            throw new ArgumentException(
+                "Sampling rate not support, only available for [8000, 16000]"
+            );
         }
 
         this._model = new SileroVadOnnxModel(onnxModelPath);
@@ -38,7 +48,8 @@ public class SileroVadDetector
         this._windowSizeSample = samplingRate == SAMPLING_RATE_16K ? 512 : 256;
         this._minSpeechSamples = samplingRate * minSpeechDurationMs / 1000f;
         this._speechPadSamples = samplingRate * speechPadMs / 1000f;
-        this._maxSpeechSamples = samplingRate * maxSpeechDurationSeconds - _windowSizeSample - 2 * _speechPadSamples;
+        this._maxSpeechSamples =
+            samplingRate * maxSpeechDurationSeconds - _windowSizeSample - 2 * _speechPadSamples;
         this._minSilenceSamples = samplingRate * minSilenceDurationMs / 1000f;
         this._minSilenceSamplesAtMaxSpeech = samplingRate * 98 / 1000f;
         this.Reset();
@@ -71,7 +82,9 @@ public class SileroVadDetector
     {
         List<SileroSpeechSegment> result = [];
         bool triggered = false;
-        int tempEnd = 0, prevEnd = 0, nextStart = 0;
+        int tempEnd = 0,
+            prevEnd = 0,
+            nextStart = 0;
         SileroSpeechSegment segment = new();
 
         for (int i = 0; i < speechProbList.Count; i++)
@@ -160,7 +173,10 @@ public class SileroVadDetector
             }
         }
 
-        if (segment.StartOffset != null && (_audioLengthSamples - segment.StartOffset) > _minSpeechSamples)
+        if (
+            segment.StartOffset != null
+            && (_audioLengthSamples - segment.StartOffset) > _minSpeechSamples
+        )
         {
             //segment.EndOffset = _audioLengthSamples;
             segment.EndOffset = speechProbList.Count * _windowSizeSample;
@@ -182,24 +198,33 @@ public class SileroVadDetector
                 if (silenceDuration < 2 * _speechPadSamples)
                 {
                     item.EndOffset += (silenceDuration / 2);
-                    nextItem.StartOffset = Math.Max(0, nextItem.StartOffset.Value - (silenceDuration / 2));
+                    nextItem.StartOffset = Math.Max(
+                        0,
+                        nextItem.StartOffset.Value - (silenceDuration / 2)
+                    );
                 }
                 else
                 {
-                    item.EndOffset = (int)Math.Min(_audioLengthSamples, item.EndOffset.Value + _speechPadSamples);
-                    nextItem.StartOffset = (int)Math.Max(0, nextItem.StartOffset.Value - _speechPadSamples);
+                    item.EndOffset = (int)
+                        Math.Min(_audioLengthSamples, item.EndOffset.Value + _speechPadSamples);
+                    nextItem.StartOffset = (int)
+                        Math.Max(0, nextItem.StartOffset.Value - _speechPadSamples);
                 }
             }
             else
             {
-                item.EndOffset = (int)Math.Min(_audioLengthSamples, item.EndOffset.Value + _speechPadSamples);
+                item.EndOffset = (int)
+                    Math.Min(_audioLengthSamples, item.EndOffset.Value + _speechPadSamples);
             }
         }
 
         return MergeListAndCalculateSecond(result, _samplingRate);
     }
 
-    private static List<SileroSpeechSegment> MergeListAndCalculateSecond(List<SileroSpeechSegment> original, int samplingRate)
+    private static List<SileroSpeechSegment> MergeListAndCalculateSecond(
+        List<SileroSpeechSegment> original,
+        int samplingRate
+    )
     {
         List<SileroSpeechSegment> result = [];
         if (original == null || original.Count == 0)
@@ -215,11 +240,17 @@ public class SileroVadDetector
             for (int i = 1; i < original.Count; i++)
             {
                 SileroSpeechSegment segment = original[i];
-    
+
                 if (segment.StartOffset > right)
                 {
-                    result.Add(new SileroSpeechSegment(left, right,
-                        CalculateSecondByOffset(left, samplingRate), CalculateSecondByOffset(right, samplingRate)));
+                    result.Add(
+                        new SileroSpeechSegment(
+                            left,
+                            right,
+                            CalculateSecondByOffset(left, samplingRate),
+                            CalculateSecondByOffset(right, samplingRate)
+                        )
+                    );
                     left = segment.StartOffset.Value;
                     right = segment.EndOffset.Value;
                 }
@@ -229,13 +260,25 @@ public class SileroVadDetector
                 }
             }
 
-            result.Add(new SileroSpeechSegment(left, right,
-                CalculateSecondByOffset(left, samplingRate), CalculateSecondByOffset(right, samplingRate)));
+            result.Add(
+                new SileroSpeechSegment(
+                    left,
+                    right,
+                    CalculateSecondByOffset(left, samplingRate),
+                    CalculateSecondByOffset(right, samplingRate)
+                )
+            );
         }
         else
         {
-            result.Add(new SileroSpeechSegment(left, right,
-                CalculateSecondByOffset(left, samplingRate), CalculateSecondByOffset(right, samplingRate)));
+            result.Add(
+                new SileroSpeechSegment(
+                    left,
+                    right,
+                    CalculateSecondByOffset(left, samplingRate),
+                    CalculateSecondByOffset(right, samplingRate)
+                )
+            );
         }
 
         return result;

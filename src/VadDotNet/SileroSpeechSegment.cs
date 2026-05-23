@@ -7,11 +7,14 @@ public class SileroSpeechSegment
     public float? StartSecond { get; set; }
     public float? EndSecond { get; set; }
 
-    public SileroSpeechSegment()
-    {
-    }
+    public SileroSpeechSegment() { }
 
-    public SileroSpeechSegment(int startOffset, int? endOffset, float? startSecond, float? endSecond)
+    public SileroSpeechSegment(
+        int startOffset,
+        int? endOffset,
+        float? startSecond,
+        float? endSecond
+    )
     {
         StartOffset = startOffset;
         EndOffset = endOffset;

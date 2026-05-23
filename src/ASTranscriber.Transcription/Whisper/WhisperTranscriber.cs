@@ -5,7 +5,7 @@ using FluentResults;
 using Microsoft.Extensions.Logging;
 using NLog.Extensions.Logging;
 using PathLib;
-using ShellProgressBar;
+using Spectre.Console;
 using Subtitles;
 using Whisper.net;
 
@@ -21,6 +21,8 @@ public class WhisperTranscriber : ITranscriber
     private readonly ILogger<WhisperTranscriber> _logger = LoggerFactory
         .Create(builder => builder.SetMinimumLevel(LogLevel.Debug).AddNLog())
         .CreateLogger<WhisperTranscriber>();
+
+    private ProgressContext? _transcriptionProgressContext;
 
     private readonly List<string> _allowedExtensions = [".wav", ".mp3", ".opus", ".m4a"];
 
@@ -43,31 +45,47 @@ public class WhisperTranscriber : ITranscriber
         {
             var whisperModelDownloader = new WhisperModelDownloader();
             _logger.LogInformation($"Downloading \"{whisperModelPath}\"");
-            try
-            {
-                using var pb = new IndeterminateProgressBar(
-                    "Downloading",
-                    _childProgressBarOptions
-                );
-                var downloadTask = whisperModelDownloader.DownloadWhisperModel(whisperModelPath);
-                downloadTask.Wait();
-                pb.Finished();
-            }
-            catch (ArgumentException e)
-            {
-                _logger.LogError($"Could not download model: {e.Message}");
-                throw;
-            }
-            catch (Exception e)
-            {
-                _logger.LogError(e, "Could not download model: ");
-                throw;
-            }
+
+            var cts = new CancellationTokenSource();
+            var handler = CreateCancelEventHandler(cts);
+
+            Console.CancelKeyPress += handler;
+            AnsiConsole
+                .Progress()
+                .Columns(
+                    new TaskDescriptionColumn(),
+                    new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
+                    new DownloadedColumn(),
+                    new ElapsedTimeColumn()
+                )
+                .Start(ctx =>
+                {
+                    var task = ctx.AddTask($"Downloading model \"{whisperModel}\"");
+                    task.IsIndeterminate = true;
+                    try
+                    {
+                        var downloadTask = whisperModelDownloader.DownloadWhisperModel(
+                            whisperModelPath,
+                            cts.Token
+                        );
+                        downloadTask.Wait(cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        AnsiConsole.MarkupLine("[red]Cancelled[/]");
+                        task.StopTask();
+                        _transcriptionProgressContext = null;
+                        Console.CancelKeyPress -= handler;
+                        throw;
+                    }
+                    Console.CancelKeyPress -= handler;
+                    task.StopTask();
+                });
         }
 
-        _inputDirectory = inputDirPath;
-        _outputDirectory = outputDirPath;
-        _modelPath = whisperModelPath;
+        _inputDirectory = inputDirPath.Resolve();
+        _outputDirectory = outputDirPath.Resolve();
+        _modelPath = whisperModelPath.Resolve();
     }
 
     public Result Start()
@@ -76,165 +94,186 @@ public class WhisperTranscriber : ITranscriber
         var len = 0;
         foreach (var entry in _inputDirectory.ListDir().OrderBy(x => x.Basename))
         {
+            _logger.LogDebug(
+                $"{count++}: {entry.Filename} {entry.Parents()} {_inputDirectory.Parents()}"
+            );
             if (!entry.IsFile())
+                continue;
+            if (entry.Parents().All(x => x.ToPathString() == "exlude"))
                 continue;
             if (!_allowedExtensions.Contains(entry.Extension))
             {
                 _logger.LogWarning($"Ignoring unsupported file: {entry.Filename}");
                 continue;
             }
-            _logger.LogDebug($"{count++}: {entry.Filename}");
             _jobs.Enqueue(entry);
             len++;
         }
 
-        count = 1;
-
-        using var pb = new ProgressBar(len, "", _mainProgressBarOptions);
-        while (_jobs.Count != 0)
-        {
-            var job = _jobs.Dequeue();
-            pb.Message =
-                $"[{count++}/{len}] Processing \"{Path.GetRelativePath(Environment.CurrentDirectory, job.ToString())}\"";
-
-            var cts = new CancellationTokenSource();
-            ConsoleCancelEventHandler onExit = (_, e) =>
+        AnsiConsole
+            .Progress()
+            .Columns(
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
+                new DownloadedColumn(),
+                new ElapsedTimeColumn()
+            )
+            .HideCompleted(true)
+            .AutoClear(true)
+            .Start(ctx =>
             {
-                e.Cancel = true; // Don't kill the process immediately
-                cts.Cancel();
-            };
-            try
-            {
-                Console.CancelKeyPress += onExit;
-
-                var wav = ToWhisperSupportedWav(
-                    Path.GetRelativePath(Environment.CurrentDirectory, job.ToString()),
-                    pb
-                );
-                if (wav.IsFailed)
+                _transcriptionProgressContext = ctx;
+                var transcriptionTask = ctx.AddTask("Transcribing", maxValue: len);
+                while (_jobs.Count != 0)
                 {
-                    throw new Exception(wav.Errors.ToString());
+                    var currentJob = _jobs.Dequeue();
+                    var wav = ToWhisperSupportedWav(currentJob);
+                    if (wav.IsFailed)
+                    {
+                        transcriptionTask.Increment(1);
+                        continue;
+                    }
+                    using var cts = new CancellationTokenSource();
+                    ConsoleCancelEventHandler handler = CreateCancelEventHandler(cts);
+                    Console.CancelKeyPress += handler;
+
+                    try
+                    {
+                        var whisperTask = RunWhisper(wav.Value, _modelPath.ToString()!, cts.Token);
+                        whisperTask.Wait(cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        AnsiConsole.MarkupLine("[red]Cancelled[/]");
+                        transcriptionTask.StopTask();
+                        _transcriptionProgressContext = null;
+                        Console.CancelKeyPress -= handler;
+                        break;
+                    }
+                    Console.CancelKeyPress -= handler;
+
+                    transcriptionTask.Increment(1);
                 }
-
-                var whisperTask = RunWhisper(wav.Value, _modelPath.ToString(), pb, cts.Token);
-                whisperTask.Wait(cts.Token);
-            }
-            catch (OperationCanceledException e) { }
-            catch (Exception e)
-            {
-                pb.WriteErrorLine("FAILED" + e.Message);
-                _logger.LogError(e, "FAILURE ");
-            }
-            finally
-            {
-                Console.CancelKeyPress -= onExit;
-                cts.Dispose();
-            }
-
-            pb.Tick();
-        }
-        _logger.LogInformation("Done.");
+            });
 
         return Result.Ok();
     }
 
     private async Task<WhisperTranscriptionException?> RunWhisper(
-        string wavFileName,
+        IPath wavFilePath,
         string modelPath,
-        ProgressBar pb,
         CancellationToken ct
     )
     {
+        var wavFileName = wavFilePath.ToString()!;
         using var whisperFactory = WhisperFactory.FromPath(modelPath);
         await using var processor = whisperFactory
             .CreateBuilder()
             .WithLanguage("auto")
-            .WithAudioContextSize(0)
+            .WithNoContext()
             .WithTemperature(0)
             .Build();
         await using var fileStream = File.OpenRead(wavFileName);
 
-        var max = FFProbe.Analyse(wavFileName).Duration;
-        var childPb = pb.Spawn(100, "Transcribing...");
-        var progress = childPb.AsProgress<double>();
+        var max = (await FFProbe.AnalyseAsync(wavFileName, cancellationToken: ct)).Duration;
+        var currentTask = _transcriptionProgressContext?.AddTask(
+            TruncateString(wavFilePath.Basename, 16),
+            maxValue: 100
+        );
 
-        // TODO: Use ISubtitles
         var srt = new Srt();
 
         await foreach (var result in processor.ProcessAsync(fileStream, ct))
         {
+            currentTask?.Value = (result.End / max) * 100;
+
+            var escapedTime = Markup.Escape($"[{result.Start:G}->{result.End:G}]");
+            AnsiConsole.MarkupLine($"[bold]{escapedTime}[/] {result.Text}");
+            srt.AddLine(result.Text, result.Start.ToString(), result.End.ToString());
+
             if (ct.IsCancellationRequested)
             {
-                _logger.LogError("Cancelling.");
-                return null;
+                currentTask?.StopTask();
+                break;
             }
-            progress.Report(result.End / max);
-            pb.WriteLine($"[{result.Start:g}->{result.End:g}] {result.Text}");
-            srt.AddLine(result.Text, result.Start.ToString(), result.End.ToString());
         }
+
+        currentTask?.Value = 100;
 
         srt.WriteFile(
             _outputDirectory
                 .Join([$"{Path.GetFileNameWithoutExtension(wavFileName)}.srt"])
-                .ToString()
+                .ToPathString()
         );
 
         return null;
     }
 
-    public IPath? GetTranscriptionSrt()
+    private static string TruncateString(string s, int length)
+    {
+        const string ellipse = " ... ";
+        var sLen = s.Length;
+        var termWidth = Console.WindowWidth / 4;
+        if (sLen <= length + ellipse.Length || termWidth < ellipse.Length)
+            return s;
+        var keep = (termWidth - ellipse.Length) / 2;
+        return s[..keep] + " ... " + s[(sLen - keep)..];
+    }
+
+    public IPath GetTranscriptionSrt()
     {
         throw new NotImplementedException();
     }
 
-    public Result<string> ToWhisperSupportedWav(string path, ProgressBar pb)
+    private Result<IPath> ToWhisperSupportedWav(IPath path)
     {
-        _logger.LogInformation($"Converting \"{path}\" to whisper supported format");
-
-        var primaryAudioStream = FFProbe.Analyse(path).PrimaryAudioStream;
+        var primaryAudioStream = FFProbe.Analyse(path.ToPathString()).PrimaryAudioStream;
         if (primaryAudioStream is null)
         {
             return Result.Fail("Could not convert. Lacks a primary audio stream");
         }
 
-        var outputPath = Path.GetTempFileName();
-        outputPath = Path.ChangeExtension(outputPath, ".wav");
+        var pFac = new PathFactory();
+        var outputPath = pFac.Create(Path.GetTempPath(), path.BasenameWithoutExtensions + ".wav");
         _logger.LogDebug($"saving to {outputPath}");
 
-        var childPb = pb.SpawnIndeterminate("Converting to wav", _childProgressBarOptions);
+        var convertingTask = _transcriptionProgressContext?.AddTask(
+            "Converting to WAV",
+            maxValue: 1
+        );
+        convertingTask?.IsIndeterminate = true;
 
         FFMpegArguments
-            .FromFileInput(path)
+            .FromFileInput(path.ToPathString())
             .OutputToFile(
-                outputPath,
+                outputPath.ToPathString(),
                 true,
                 opt =>
                     opt.WithoutMetadata().WithAudioSamplingRate(16_000).WithCustomArgument("-ac 1")
             )
             .WithLogLevel(FFMpegLogLevel.Quiet)
             .ProcessSynchronously();
-
-        childPb.Finished();
+        convertingTask?.Value = 1;
 
         return Result.Ok(outputPath);
     }
 
-    private class TranscriptionJob(IPath filePath)
+    private static ConsoleCancelEventHandler CreateCancelEventHandler(CancellationTokenSource cts)
     {
-        public IPath FilePath = filePath;
+        return (_, args) =>
+        {
+            args.Cancel = true;
+            cts.Cancel();
+            args.Cancel = false;
+        };
     }
+}
 
-    private readonly ProgressBarOptions _mainProgressBarOptions = new()
+public static class PathExtensions
+{
+    extension(IPath path)
     {
-        ProgressCharacter = '─',
-        ProgressBarOnBottom = true,
-        CollapseWhenFinished = true,
-    };
-
-    private readonly ProgressBarOptions _childProgressBarOptions = new()
-    {
-        ProgressCharacter = '─',
-        ProgressBarOnBottom = true,
-        CollapseWhenFinished = true,
-    };
+        public string ToPathString() =>
+            path.ToString() ?? throw new InvalidOperationException("Path produced a null string.");
+    }
 }
