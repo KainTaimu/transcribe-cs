@@ -1,3 +1,4 @@
+using ASTranscriber.Core.Extensions;
 using FFMpegCore;
 using FFMpegCore.Enums;
 using FluentResults;
@@ -117,9 +118,9 @@ public class WhisperTranscriber : ITranscriber
         AnsiConsole
             .Progress()
             .Columns(
-                new TaskDescriptionColumn(),
+                new TaskDescriptionColumn() { Alignment = Justify.Left },
                 new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
-                new DownloadedColumn(),
+                new DownloadedColumn() { Base = FileSizeBase.Decimal },
                 new ElapsedTimeColumn()
             )
             .HideCompleted(true)
@@ -281,14 +282,5 @@ public class WhisperTranscriber : ITranscriber
     {
         public IPath OriginalAudioPath { get; } = originalAudioPath;
         public IPath WorkingDir { get; } = workingDir;
-    }
-}
-
-public static class PathExtensions
-{
-    extension(IPath path)
-    {
-        public string ToPathString() =>
-            path.ToString() ?? throw new InvalidOperationException("Path produced a null string.");
     }
 }

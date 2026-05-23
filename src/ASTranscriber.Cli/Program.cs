@@ -1,14 +1,10 @@
 using System.CommandLine;
 using System.Runtime.InteropServices;
-using ASTranscriber.Transcription;
 using ASTranscriber.Transcription.Whisper;
 using Microsoft.Extensions.Logging;
-using NLog;
 using NLog.Extensions.Logging;
-using NLog.Targets;
 using PathLib;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
-using LogLevel = NLog.LogLevel;
 using MLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace ASTranscriber.Cli;
