@@ -88,8 +88,33 @@ public static class Program
             Logger.LogDebug($"Input dir: {inputDir}");
             Logger.LogDebug($"Output dir: {outputDir}");
 
-            var transcriber = new WhisperTranscriber(inputDirPath, outputDirPath, whisperModel);
-            return transcriber.Start().IsSuccess ? 0 : 1;
+            var transcriber = new WhisperTranscriber();
+            var modelPath = factory.Create(whisperModel);
+
+            // Process all audio files in the input directory
+            foreach (var entry in inputDirPath.ListDir().OrderBy(x => x.Basename))
+            {
+                if (!entry.IsFile())
+                    continue;
+
+                var supportedExtensions = new List<string> { ".wav", ".mp3", ".opus", ".m4a" };
+                if (!supportedExtensions.Contains(entry.Extension))
+                {
+                    Logger.LogWarning($"Ignoring unsupported file: {entry.Filename}");
+                    continue;
+                }
+
+                var result = transcriber.Start(entry, outputDirPath, modelPath);
+                if (result.IsFailed)
+                {
+                    Logger.LogError(
+                        $"Failed to transcribe {entry.Filename}: {string.Join(", ", result.Errors.Select(e => e.Message))}"
+                    );
+                    return 1;
+                }
+            }
+
+            return 0;
         });
 
         var parseResult = rootCommand.Parse(args);

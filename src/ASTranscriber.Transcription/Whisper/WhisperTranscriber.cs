@@ -13,43 +13,123 @@ namespace ASTranscriber.Transcription.Whisper;
 
 public class WhisperTranscriber : ITranscriber
 {
-    private readonly Queue<TranscriptionJob> _jobs = new();
-    private readonly IPath _inputDirectory;
-    private readonly IPath _outputDirectory;
-    private readonly IPath _modelPath;
-
     private readonly ILogger<WhisperTranscriber> _logger = LoggerFactory
         .Create(builder => builder.SetMinimumLevel(LogLevel.Debug).AddNLog())
         .CreateLogger<WhisperTranscriber>();
 
-    private ProgressContext? _transcriptionProgressContext;
+    private static readonly string[] _allowedExtensions = [".wav", ".mp3", ".opus", ".m4a"];
 
-    private readonly List<string> _allowedExtensions = [".wav", ".mp3", ".opus", ".m4a"];
-
-    public WhisperTranscriber(IPath inputDirPath, IPath outputDirPath, string whisperModel)
+    public Result Start(IPath inputFile, IPath outputDirectory, IPath modelPath)
     {
-        if (!inputDirPath.IsDir())
-            throw new ArgumentException($"Input directry \"{inputDirPath}\" is not a directory");
-        if (!outputDirPath.IsDir())
-            throw new ArgumentException($"Output directry \"{outputDirPath}\" is not a directory");
+        if (!ValidateInputFile(inputFile, out var validationError))
+            return Result.Fail(validationError);
 
-        var factory = new PathFactory();
-        var whisperModelPath = factory.Create(whisperModel);
-        if (!whisperModel.EndsWith(".bin"))
-            whisperModelPath = whisperModelPath.WithExtension(".bin");
+        if (!EnsureOutputDirectory(outputDirectory, out var dirError))
+            return Result.Fail(dirError);
 
-        if (!whisperModelPath.Parent().IsDir())
-            whisperModelPath.Parent().Mkdir();
+        var resolvedModelPath = ResolveModelPath(modelPath);
 
-        if (!whisperModelPath.IsFile())
+        var ensureModelResult = EnsureModelExists(resolvedModelPath);
+        if (ensureModelResult.IsFailed)
+            return ensureModelResult;
+
+        var outputFileDir = outputDirectory.Join(inputFile.BasenameWithoutExtensions);
+        if (!TryCreateDirectory(outputFileDir, out var mkdirError))
+            return Result.Fail(mkdirError);
+
+        var wavResult = ToWhisperSupportedWav(inputFile);
+        if (wavResult.IsFailed)
+            return Result.Fail(wavResult.Errors.First().Message);
+
+        return ProcessTranscription(wavResult.Value, resolvedModelPath, outputFileDir);
+    }
+
+    private bool ValidateInputFile(IPath inputFile, out string error)
+    {
+        error = string.Empty;
+
+        if (!inputFile.IsFile())
         {
-            var whisperModelDownloader = new WhisperModelDownloader();
-            _logger.LogInformation($"Downloading \"{whisperModelPath}\"");
+            error = $"Input file \"{inputFile}\" is not a file or does not exist";
+            return false;
+        }
 
-            var cts = new CancellationTokenSource();
-            var handler = CreateCancelEventHandler(cts);
+        if (!_allowedExtensions.Contains(inputFile.Extension))
+        {
+            error = $"Unsupported file format: {inputFile.Extension}";
+            return false;
+        }
 
-            Console.CancelKeyPress += handler;
+        return true;
+    }
+
+    private bool EnsureOutputDirectory(IPath directory, out string error)
+    {
+        error = string.Empty;
+
+        if (directory.IsDir())
+            return true;
+
+        try
+        {
+            directory.Mkdir(true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to create output directory \"{directory}\": {ex.Message}";
+            return false;
+        }
+    }
+
+    private bool TryCreateDirectory(IPath directory, out string error)
+    {
+        error = string.Empty;
+
+        try
+        {
+            directory.Mkdir(true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to create directory \"{directory}\": {ex.Message}";
+            return false;
+        }
+    }
+
+    private IPath ResolveModelPath(IPath modelPath)
+    {
+        var resolved = modelPath;
+        if (!modelPath.ToString()!.EndsWith(".bin"))
+            resolved = modelPath.WithExtension(".bin");
+
+        if (!resolved.Parent().IsDir())
+            resolved.Parent().Mkdir();
+
+        return resolved;
+    }
+
+    private Result EnsureModelExists(IPath modelPath)
+    {
+        if (modelPath.IsFile())
+            return Result.Ok();
+
+        return DownloadModel(modelPath);
+    }
+
+    private Result DownloadModel(IPath modelPath)
+    {
+        var whisperModelDownloader = new WhisperModelDownloader();
+        _logger.LogInformation($"Downloading \"{modelPath}\"");
+
+        var cts = new CancellationTokenSource();
+        var handler = CreateCancelEventHandler(cts);
+
+        Console.CancelKeyPress += handler;
+
+        try
+        {
             AnsiConsole
                 .Progress()
                 .Columns(
@@ -60,12 +140,12 @@ public class WhisperTranscriber : ITranscriber
                 )
                 .Start(ctx =>
                 {
-                    var task = ctx.AddTask($"Downloading model \"{whisperModel}\"");
+                    var task = ctx.AddTask($"Downloading model \"{modelPath.Basename}\"");
                     task.IsIndeterminate = true;
                     try
                     {
                         var downloadTask = whisperModelDownloader.DownloadWhisperModel(
-                            whisperModelPath,
+                            modelPath,
                             cts.Token
                         );
                         downloadTask.Wait(cts.Token);
@@ -74,107 +154,73 @@ public class WhisperTranscriber : ITranscriber
                     {
                         AnsiConsole.MarkupLine("[red]Cancelled[/]");
                         task.StopTask();
-                        _transcriptionProgressContext = null;
                         Console.CancelKeyPress -= handler;
                         throw;
                     }
                     Console.CancelKeyPress -= handler;
                     task.StopTask();
                 });
-        }
 
-        _inputDirectory = inputDirPath.Resolve();
-        _outputDirectory = outputDirPath.Resolve();
-        _modelPath = whisperModelPath.Resolve();
+            return Result.Ok();
+        }
+        catch (OperationCanceledException)
+        {
+            return Result.Fail("Model download cancelled");
+        }
     }
 
-    public Result Start()
+    private Result ProcessTranscription(IPath wavFile, IPath modelPath, IPath outputDir)
     {
-        var count = 1;
-        var len = 0;
-        foreach (var entry in _inputDirectory.ListDir().OrderBy(x => x.Basename))
+        using var cts = new CancellationTokenSource();
+        var handler = CreateCancelEventHandler(cts);
+        Console.CancelKeyPress += handler;
+
+        try
         {
-            _logger.LogDebug(
-                $"{count++}: {entry.Filename} {entry.Parents()} {_inputDirectory.Parents()}"
-            );
-            if (!entry.IsFile())
-                continue;
-            if (entry.Parents().All(x => x.ToPathString() == "exlude"))
-                continue;
-            if (!_allowedExtensions.Contains(entry.Extension))
-            {
-                _logger.LogWarning($"Ignoring unsupported file: {entry.Filename}");
-                continue;
-            }
-
-            var outputPath = _outputDirectory.Join(entry.BasenameWithoutExtensions);
-            outputPath.Mkdir(true);
-
-            var job = new TranscriptionJob(entry, outputPath);
-            _jobs.Enqueue(job);
-            len++;
-        }
-
-        AnsiConsole
-            .Progress()
-            .Columns(
-                new TaskDescriptionColumn() { Alignment = Justify.Left },
-                new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
-                new DownloadedColumn() { Base = FileSizeBase.Decimal },
-                new ElapsedTimeColumn()
-            )
-            .HideCompleted(true)
-            .AutoClear(true)
-            .Start(ctx =>
-            {
-                _transcriptionProgressContext = ctx;
-                var transcriptionTask = ctx.AddTask("Transcribing", maxValue: len);
-                while (_jobs.Count != 0)
+            AnsiConsole
+                .Progress()
+                .Columns(
+                    new TaskDescriptionColumn() { Alignment = Justify.Left },
+                    new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
+                    new DownloadedColumn() { Base = FileSizeBase.Decimal },
+                    new ElapsedTimeColumn()
+                )
+                .HideCompleted(true)
+                .AutoClear(true)
+                .Start(ctx =>
                 {
-                    var currentJob = _jobs.Dequeue();
-                    var wav = ToWhisperSupportedWav(currentJob.OriginalAudioPath);
-                    if (wav.IsFailed)
-                    {
-                        transcriptionTask.Increment(1);
-                        continue;
-                    }
+                    var task = ctx.AddTask("Transcribing", maxValue: 1);
+                    var srtTask = RunWhisper(
+                        wavFile,
+                        modelPath.ToString()!,
+                        outputDir,
+                        cts.Token,
+                        ctx
+                    );
+                    srtTask.Wait(cts.Token);
+                    task.Increment(1);
+                });
 
-                    using var cts = new CancellationTokenSource();
-                    var handler = CreateCancelEventHandler(cts);
-                    Console.CancelKeyPress += handler;
-
-                    try
-                    {
-                        var srt = RunWhisper(
-                            wav.Value,
-                            _modelPath.ToString()!,
-                            currentJob.WorkingDir,
-                            cts.Token
-                        );
-                        srt.Wait(cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        AnsiConsole.MarkupLine("[red]Cancelled[/]");
-                        transcriptionTask.StopTask();
-                        _transcriptionProgressContext = null;
-                        Console.CancelKeyPress -= handler;
-                        break;
-                    }
-                    Console.CancelKeyPress -= handler;
-
-                    transcriptionTask.Increment(1);
-                }
-            });
-
-        return Result.Ok();
+            return Result.Ok();
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine("[red]Cancelled[/]");
+            Console.CancelKeyPress -= handler;
+            return Result.Fail("Transcription cancelled");
+        }
+        finally
+        {
+            Console.CancelKeyPress -= handler;
+        }
     }
 
     private async Task<Result<IPath>> RunWhisper(
         IPath wavFilePath,
         string modelPath,
         IPath outputPath,
-        CancellationToken ct
+        CancellationToken ct,
+        ProgressContext? progressContext = null
     )
     {
         var wavFileName = wavFilePath.ToString()!;
@@ -188,7 +234,7 @@ public class WhisperTranscriber : ITranscriber
         await using var fileStream = File.OpenRead(wavFileName);
 
         var max = (await FFProbe.AnalyseAsync(wavFileName, cancellationToken: ct)).Duration;
-        var currentTask = _transcriptionProgressContext?.AddTask(
+        var currentTask = progressContext?.AddTask(
             TruncateString(wavFilePath.Basename, 16),
             maxValue: 100
         );
@@ -213,7 +259,6 @@ public class WhisperTranscriber : ITranscriber
         currentTask?.Value = 100;
 
         var outPath = outputPath.Join($"{Path.GetFileNameWithoutExtension(wavFileName)}.srt");
-
         srt.WriteFile(outPath.ToPathString());
 
         return Result.Ok(outPath);
@@ -239,19 +284,11 @@ public class WhisperTranscriber : ITranscriber
     {
         var primaryAudioStream = FFProbe.Analyse(path.ToPathString()).PrimaryAudioStream;
         if (primaryAudioStream is null)
-        {
             return Result.Fail("Could not convert. Lacks a primary audio stream");
-        }
 
         var pFac = new PathFactory();
         var outputPath = pFac.Create(Path.GetTempPath(), path.BasenameWithoutExtensions + ".wav");
         _logger.LogDebug($"saving to {outputPath}");
-
-        var convertingTask = _transcriptionProgressContext?.AddTask(
-            "Converting to WAV",
-            maxValue: 1
-        );
-        convertingTask?.IsIndeterminate = true;
 
         FFMpegArguments
             .FromFileInput(path.ToPathString())
@@ -263,7 +300,6 @@ public class WhisperTranscriber : ITranscriber
             )
             .WithLogLevel(FFMpegLogLevel.Quiet)
             .ProcessSynchronously();
-        convertingTask?.Value = 1;
 
         return Result.Ok(outputPath);
     }
@@ -276,11 +312,5 @@ public class WhisperTranscriber : ITranscriber
             cts.Cancel();
             args.Cancel = false;
         };
-    }
-
-    public class TranscriptionJob(IPath originalAudioPath, IPath workingDir)
-    {
-        public IPath OriginalAudioPath { get; } = originalAudioPath;
-        public IPath WorkingDir { get; } = workingDir;
     }
 }
