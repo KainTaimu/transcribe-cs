@@ -1,4 +1,3 @@
-using ASTranscriber.Core;
 using FFMpegCore;
 using FFMpegCore.Enums;
 using FluentResults;
@@ -13,7 +12,7 @@ namespace ASTranscriber.Transcription.Whisper;
 
 public class WhisperTranscriber : ITranscriber
 {
-    private readonly Queue<IPath> _jobs = new();
+    private readonly Queue<TranscriptionJob> _jobs = new();
     private readonly IPath _inputDirectory;
     private readonly IPath _outputDirectory;
     private readonly IPath _modelPath;
@@ -106,7 +105,12 @@ public class WhisperTranscriber : ITranscriber
                 _logger.LogWarning($"Ignoring unsupported file: {entry.Filename}");
                 continue;
             }
-            _jobs.Enqueue(entry);
+
+            var outputPath = _outputDirectory.Join(entry.BasenameWithoutExtensions);
+            outputPath.Mkdir(true);
+
+            var job = new TranscriptionJob(entry, outputPath);
+            _jobs.Enqueue(job);
             len++;
         }
 
@@ -127,20 +131,26 @@ public class WhisperTranscriber : ITranscriber
                 while (_jobs.Count != 0)
                 {
                     var currentJob = _jobs.Dequeue();
-                    var wav = ToWhisperSupportedWav(currentJob);
+                    var wav = ToWhisperSupportedWav(currentJob.OriginalAudioPath);
                     if (wav.IsFailed)
                     {
                         transcriptionTask.Increment(1);
                         continue;
                     }
+
                     using var cts = new CancellationTokenSource();
-                    ConsoleCancelEventHandler handler = CreateCancelEventHandler(cts);
+                    var handler = CreateCancelEventHandler(cts);
                     Console.CancelKeyPress += handler;
 
                     try
                     {
-                        var whisperTask = RunWhisper(wav.Value, _modelPath.ToString()!, cts.Token);
-                        whisperTask.Wait(cts.Token);
+                        var srt = RunWhisper(
+                            wav.Value,
+                            _modelPath.ToString()!,
+                            currentJob.WorkingDir,
+                            cts.Token
+                        );
+                        srt.Wait(cts.Token);
                     }
                     catch (OperationCanceledException)
                     {
@@ -159,9 +169,10 @@ public class WhisperTranscriber : ITranscriber
         return Result.Ok();
     }
 
-    private async Task<WhisperTranscriptionException?> RunWhisper(
+    private async Task<Result<IPath>> RunWhisper(
         IPath wavFilePath,
         string modelPath,
+        IPath outputPath,
         CancellationToken ct
     )
     {
@@ -200,13 +211,11 @@ public class WhisperTranscriber : ITranscriber
 
         currentTask?.Value = 100;
 
-        srt.WriteFile(
-            _outputDirectory
-                .Join([$"{Path.GetFileNameWithoutExtension(wavFileName)}.srt"])
-                .ToPathString()
-        );
+        var outPath = outputPath.Join($"{Path.GetFileNameWithoutExtension(wavFileName)}.srt");
 
-        return null;
+        srt.WriteFile(outPath.ToPathString());
+
+        return Result.Ok(outPath);
     }
 
     private static string TruncateString(string s, int length)
@@ -266,6 +275,12 @@ public class WhisperTranscriber : ITranscriber
             cts.Cancel();
             args.Cancel = false;
         };
+    }
+
+    public class TranscriptionJob(IPath originalAudioPath, IPath workingDir)
+    {
+        public IPath OriginalAudioPath { get; } = originalAudioPath;
+        public IPath WorkingDir { get; } = workingDir;
     }
 }
 
