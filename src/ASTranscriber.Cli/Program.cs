@@ -4,6 +4,7 @@ using ASTranscriber.Transcription.Whisper;
 using Microsoft.Extensions.Logging;
 using NLog.Extensions.Logging;
 using PathLib;
+using Spectre.Console;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 using MLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
@@ -91,7 +92,6 @@ public static class Program
             var transcriber = new WhisperTranscriber();
             var modelPath = factory.Create(whisperModel);
 
-            // Process all audio files in the input directory
             foreach (var entry in inputDirPath.ListDir().OrderBy(x => x.Basename))
             {
                 if (!entry.IsFile())
@@ -108,7 +108,9 @@ public static class Program
                 if (result.IsFailed)
                 {
                     Logger.LogError(
-                        $"Failed to transcribe {entry.Filename}: {string.Join(", ", result.Errors.Select(e => e.Message))}"
+                        "Failed to transcribe {EntryFilename}: {Join}",
+                        entry.Filename,
+                        string.Join(", ", result.Errors.Select(e => e.Message))
                     );
                     return 1;
                 }

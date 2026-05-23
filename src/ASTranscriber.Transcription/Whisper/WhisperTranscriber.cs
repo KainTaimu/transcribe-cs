@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using NLog.Extensions.Logging;
 using PathLib;
 using Spectre.Console;
+using Spectre.Console.Rendering;
 using Subtitles;
 using Whisper.net;
 
@@ -182,14 +183,15 @@ public class WhisperTranscriber : ITranscriber
                 .Columns(
                     new TaskDescriptionColumn() { Alignment = Justify.Left },
                     new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
-                    new DownloadedColumn() { Base = FileSizeBase.Decimal },
-                    new ElapsedTimeColumn()
+                    new CountColumn() { Style = Color.Blue },
+                    new ElapsedTimeColumn() { Style = Style.Plain },
+                    new SquareBracedRemainingTimeColumn() { Style = Style.Plain }
                 )
                 .HideCompleted(true)
                 .AutoClear(true)
                 .Start(ctx =>
                 {
-                    var task = ctx.AddTask("Transcribing", maxValue: 1);
+                    var task = ctx.AddTask("[bold]Transcribing[/]", maxValue: 1);
                     var srtTask = RunWhisper(
                         wavFile,
                         modelPath.ToString()!,
@@ -200,19 +202,19 @@ public class WhisperTranscriber : ITranscriber
                     srtTask.Wait(cts.Token);
                     task.Increment(1);
                 });
-
-            return Result.Ok();
         }
         catch (OperationCanceledException)
         {
             AnsiConsole.MarkupLine("[red]Cancelled[/]");
-            Console.CancelKeyPress -= handler;
             return Result.Fail("Transcription cancelled");
         }
         finally
         {
             Console.CancelKeyPress -= handler;
         }
+
+        AnsiConsole.MarkupLine($"[bold][blue]Finished {wavFile.BasenameWithoutExtensions}[/][/]");
+        return Result.Ok();
     }
 
     private async Task<Result<IPath>> RunWhisper(
@@ -235,7 +237,7 @@ public class WhisperTranscriber : ITranscriber
 
         var max = (await FFProbe.AnalyseAsync(wavFileName, cancellationToken: ct)).Duration;
         var currentTask = progressContext?.AddTask(
-            TruncateString(wavFilePath.Basename, 16),
+            $"[bold]{TruncateString(wavFilePath.Basename, 16)}[/]",
             maxValue: 100
         );
 
@@ -245,8 +247,7 @@ public class WhisperTranscriber : ITranscriber
         {
             currentTask?.Value = (result.End / max) * 100;
 
-            var escapedTime = Markup.Escape($"[{result.Start:G}->{result.End:G}]");
-            AnsiConsole.MarkupLine($"[bold]{escapedTime}[/] {result.Text}");
+            AnsiConsole.MarkupLine($"[[{result.Start:G}->{result.End:G}]] {result.Text}");
             srt.AddLine(result.Text, result.Start.ToString(), result.End.ToString());
 
             if (ct.IsCancellationRequested)
@@ -312,5 +313,62 @@ public class WhisperTranscriber : ITranscriber
             cts.Cancel();
             args.Cancel = false;
         };
+    }
+}
+
+internal class CountColumn : ProgressColumn
+{
+    public string? Unit { get; set; }
+
+    /// <summary>
+    /// Gets or sets the style of the remaining text.
+    /// </summary>
+    public Style Style { get; set; } = Color.Blue;
+
+    public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
+    {
+        var current = (long)task.Value;
+        var total = (long)task.MaxValue;
+
+        var text = total > 0 ? $"{current}/{total}" : $"{current}/?";
+
+        if (Unit is not null)
+            text += $" {Unit}";
+
+        return new Markup($"{text}", Style);
+    }
+}
+
+internal class SquareBracedRemainingTimeColumn : ProgressColumn
+{
+    /// <inheritdoc/>
+    protected override bool NoWrap => true;
+
+    /// <summary>
+    /// Gets or sets the style of the remaining time text.
+    /// </summary>
+    public Style Style { get; set; } = Color.Blue;
+
+    /// <inheritdoc/>
+    public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
+    {
+        var remaining = task.RemainingTime;
+        if (remaining == null)
+        {
+            return new Markup("[[--:--:--]]");
+        }
+
+        if (remaining.Value.TotalHours > 99 || task.IsIndeterminate)
+        {
+            return new Markup("[[**:**:**]]");
+        }
+
+        return new Text($"[{remaining.Value:hh\\:mm\\:ss}]", Style);
+    }
+
+    /// <inheritdoc/>
+    public override int? GetColumnWidth(RenderOptions options)
+    {
+        return 10;
     }
 }
