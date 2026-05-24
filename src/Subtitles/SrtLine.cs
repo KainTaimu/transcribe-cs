@@ -9,12 +9,25 @@ public struct SrtLine(string text, int lineNumber, string start, string end)
     public TimeSpan Start = TimeSpan.Parse(start);
     public TimeSpan End = TimeSpan.Parse(end);
 
+    private const string FORMAT = @"hh\:mm\:ss\,fff";
+
+    public string StartString
+    {
+        get => Start.ToString(FORMAT);
+        set => Start = TimeSpan.Parse(value);
+    }
+
+    public string EndString
+    {
+        get => End.ToString(FORMAT);
+        set => End = TimeSpan.Parse(value);
+    }
+
     public override string ToString()
     {
-        const string format = @"hh\:mm\:ss\,fff";
         var builder = new StringBuilder();
         builder.AppendLine(LineNumber.ToString());
-        builder.AppendLine($"{Start.ToString(format)} --> {End.ToString(format)}");
+        builder.AppendLine($"{Start.ToString(FORMAT)} --> {End.ToString(FORMAT)}");
         builder.AppendLine(Text);
         return builder.ToString();
     }
