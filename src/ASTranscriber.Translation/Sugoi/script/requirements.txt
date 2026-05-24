@@ -1,0 +1,5 @@
+srt>=3.5.0
+# GPU support requires a CUDA-enabled build — install manually before running pip install -r:
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --no-cache-dir
+# The wheel below is CPU-only; it will be overridden if the above was already run.
+llama-cpp-python

@@ -61,6 +61,12 @@ public static class Program
             DefaultValueFactory = _ => "models/large-v3-q5_0.bin",
         };
 
+        var sugoiModelOption = new Option<string>("--sugoi-model")
+        {
+            Description = "The GGUF Sugoi model to use",
+            DefaultValueFactory = _ => "models/Sugoi-14B-Ultra-Q2_K.gguf",
+        };
+
         var rootCommand = new RootCommand("Transcription and translation of audio files")
         {
             inputOption,
@@ -68,6 +74,7 @@ public static class Program
             transcriptionOption,
             translationOption,
             whisperModelOption,
+            sugoiModelOption,
             verboseOption,
         };
 
@@ -79,11 +86,13 @@ public static class Program
             var translationChoice = parseResult.GetRequiredValue(translationOption);
             var verbose = parseResult.GetRequiredValue(verboseOption);
             var whisperModel = parseResult.GetRequiredValue(whisperModelOption);
+            var sugoiModel = parseResult.GetRequiredValue(sugoiModelOption);
 
             var factory = new PathFactory();
             var inputDirPath = factory.Create(inputDir);
             var outputDirPath = factory.Create(outputDir);
             var whisperModelPath = factory.Create(whisperModel);
+            var sugoiModelPath = factory.Create(sugoiModel);
 
             if (!inputDirPath.IsDir())
                 inputDirPath.Mkdir();
@@ -103,7 +112,7 @@ public static class Program
             };
             var translator = translationChoice switch
             {
-                TranslationMode.Sugoi => new SugoiTranslator(),
+                TranslationMode.Sugoi => new SugoiTranslator(sugoiModelPath),
                 TranslationMode.Whisper => throw new NotImplementedException(),
                 _ => throw new ArgumentOutOfRangeException(),
             };
@@ -111,7 +120,7 @@ public static class Program
             AnsiConsole
                 .Progress()
                 .Columns(
-                    new TaskDescriptionColumn() { Alignment = Justify.Left },
+                    new TaskDescriptionColumn() { Alignment = Justify.Center },
                     new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
                     new CountColumn() { Style = Color.Blue },
                     new ElapsedTimeColumn() { Style = Style.Plain },
@@ -122,7 +131,17 @@ public static class Program
                 .Start(ctx =>
                 {
                     var entries = inputDirPath.ListDir().OrderBy(x => x.Basename).ToArray();
+                    if (entries.Length == 0)
+                    {
+                        Logger.LogWarning(
+                            "No files found in input directory: {InputDir}",
+                            inputDir
+                        );
+                        return;
+                    }
+
                     var primaryTask = ctx.AddTask($"...", maxValue: entries.Length);
+                    // ProgressTask primaryTask = null;
                     foreach (var entry in entries)
                     {
                         if (!entry.IsFile())
@@ -141,10 +160,14 @@ public static class Program
                             continue;
                         }
 
-                        primaryTask.Description =
-                            $"{entry.BasenameWithoutExtensions.Ellipsize(16)}";
+                        primaryTask?.Description =
+                            $"[bold]{Markup.Escape(entry.BasenameWithoutExtensions.Ellipsize(16))}[/]";
 
-                        var srtResult = transcriber.Start(entry, outputDirPath, ctx);
+                        var jobWorkingDir = (
+                            outputDirPath.Resolve() / entry.BasenameWithoutExtensions
+                        );
+
+                        var srtResult = transcriber.Start(entry, jobWorkingDir, ctx);
                         if (srtResult.IsFailed)
                         {
                             Logger.LogError(
@@ -152,15 +175,18 @@ public static class Program
                                 entry.Filename,
                                 string.Join(", ", srtResult.Errors.Select(e => e.Message))
                             );
-                            primaryTask.Increment(1);
+                            primaryTask?.Increment(1);
                             continue;
                         }
 
-                        var srt = srtResult.Value;
+                        var srt = srtResult.Value.Resolve();
+                        srtResult = translator.Start(srt, jobWorkingDir, ctx);
+                        // var srt = new PosixPath(
+                        //     "/home/erwin/Projects/csharp/transcribe-cs/outputs/W⧸X⧸Y ⧸ 常闇トワ(cover)-fmDHfS0fXm4"
+                        // );
+                        // var srtResult = translator.Start(srt, jobWorkingDir, ctx);
 
-                        srtResult = translator.Start(srt, ctx);
-
-                        primaryTask.Increment(1);
+                        primaryTask?.Increment(1);
                     }
                 });
 

@@ -40,20 +40,26 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
         if (ensureModelResult.IsFailed)
             return ensureModelResult;
 
-        var outputFileDir = outputDirectory.Join(inputFile.BasenameWithoutExtensions);
-        if (!TryCreateDirectory(outputFileDir, out var mkdirError))
+        if (!TryCreateDirectory(outputDirectory, out var mkdirError))
             return Result.Fail(mkdirError);
 
         var wavResult = ToWhisperSupportedWav(inputFile);
         if (wavResult.IsFailed)
             return Result.Fail(wavResult.Errors.First().Message);
 
-        return ProcessTranscription(
+        var result = ProcessTranscription(
             wavResult.Value,
             resolvedModelPath,
-            outputFileDir,
+            outputDirectory,
             progressContext
         );
+
+        if (result.IsSuccess)
+            AnsiConsole.MarkupLine(
+                $"[blue]Transcription completed: {Markup.Escape(inputFile.Basename)}[/]"
+            );
+
+        return result;
     }
 
     private bool ValidateInputFile(IPath inputFile, out string error)
@@ -211,7 +217,6 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
             Console.CancelKeyPress -= handler;
         }
 
-        AnsiConsole.MarkupLine($"[bold][blue]Finished {wavFile.BasenameWithoutExtensions}[/][/]");
         return Result.Ok(srtPath)!;
     }
 
@@ -230,6 +235,7 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
             .WithLanguage("auto")
             .WithNoContext()
             .WithTemperature(0)
+            .WithSuppressRegex("")
             .Build();
         await using var fileStream = File.OpenRead(wavFileName);
 
