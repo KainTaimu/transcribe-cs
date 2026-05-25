@@ -61,6 +61,18 @@ public static class Program
             DefaultValueFactory = _ => "models/large-v3-q5_0.bin",
         };
 
+        var whisperVadOption = new Option<bool>("--whisper-vad", "-w")
+        {
+            Description = "Use the Silero VAD for whisper",
+            DefaultValueFactory = _ => true,
+        };
+
+        var whisperVadModelOption = new Option<string>("--whisper-vad-model")
+        {
+            Description = "The Silero VAD model to use",
+            DefaultValueFactory = _ => "models/silero_vad.onnx",
+        };
+
         var sugoiModelOption = new Option<string>("--sugoi-model")
         {
             Description = "The GGUF Sugoi model to use",
@@ -74,6 +86,8 @@ public static class Program
             transcriptionOption,
             translationOption,
             whisperModelOption,
+            whisperVadOption,
+            whisperVadModelOption,
             sugoiModelOption,
             verboseOption,
         };
@@ -86,12 +100,15 @@ public static class Program
             var translationChoice = parseResult.GetRequiredValue(translationOption);
             var verbose = parseResult.GetRequiredValue(verboseOption);
             var whisperModel = parseResult.GetRequiredValue(whisperModelOption);
+            var vadChoice = parseResult.GetRequiredValue(whisperVadOption);
+            var sileroModel = parseResult.GetRequiredValue(whisperVadModelOption);
             var sugoiModel = parseResult.GetRequiredValue(sugoiModelOption);
 
             var factory = new PathFactory();
             var inputDirPath = factory.Create(inputDir);
             var outputDirPath = factory.Create(outputDir);
             var whisperModelPath = factory.Create(whisperModel);
+            var sileroModelPath = factory.Create(sileroModel);
             var sugoiModelPath = factory.Create(sugoiModel);
 
             if (!inputDirPath.IsDir())
@@ -107,7 +124,10 @@ public static class Program
             var transcriber = transcriptionChoice switch
             {
                 // TODO: Pass an enum instead of an IPath to WhisperTranscriber constructor
-                TranscriptionMode.Whisper => new WhisperTranscriber(whisperModelPath),
+                TranscriptionMode.Whisper => new WhisperTranscriber(
+                    whisperModelPath,
+                    vadChoice ? sileroModelPath : null
+                ),
                 _ => throw new ArgumentOutOfRangeException(),
             };
             var translator = translationChoice switch

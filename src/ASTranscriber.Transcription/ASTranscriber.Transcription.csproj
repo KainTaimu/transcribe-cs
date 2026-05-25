@@ -7,6 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="EchoSharp" Version="0.1.0" />
+    <PackageReference Include="EchoSharp.Onnx.SileroVad" Version="0.1.0" />
+    <PackageReference Include="EchoSharp.Whisper.net" Version="0.1.0" />
     <PackageReference Include="FFMpegCore" Version="5.4.0" />
     <PackageReference Include="FluentResults" Version="4.0.0" />
     <PackageReference Include="libse" Version="4.1.0-alpha8" />
