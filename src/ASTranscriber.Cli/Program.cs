@@ -23,8 +23,7 @@ public static class Program
         };
 
         var services = new ServiceCollection();
-        services.AddSingleton<IConcreteTranscriberFactory, WhisperTranscriberFactory>();
-        services.AddSingleton<ITranscriberFactory, TranscriberFactory>();
+        services.AddSingleton<ITranscriberFactory, WhisperTranscriberFactory>();
 
         var registrar = new TypeRegistrar(services);
         var app = new CommandApp<RunCommand>(registrar);

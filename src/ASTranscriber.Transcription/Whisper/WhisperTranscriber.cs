@@ -131,7 +131,10 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             srt.AddLine(result.Text, result.StartTime.ToString(), end.ToString());
 
             OnProgressChanged(
-                new ProgressEventHandler((float)end.TotalSeconds, (float)total.TotalSeconds)
+                new ProgressEventHandler(
+                    (float)result.StartTime.TotalSeconds,
+                    (float)total.TotalSeconds
+                )
             );
 
             if (ct.IsCancellationRequested)

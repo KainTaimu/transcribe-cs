@@ -4,8 +4,10 @@ using ASTranscriber.Transcription;
 using ASTranscriber.Transcription.Whisper;
 using ASTranscriber.Translation;
 using EchoSharp.Onnx.SileroVad;
+using FluentResults;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Subtitles;
 
 namespace ASTranscriber.Cli.Commands;
 
@@ -41,43 +43,86 @@ public class RunCommand(ITranscriberFactory transcriberFactory, IAnsiConsole con
         if (context.Data is not List<string> data)
             throw new InvalidOperationException("Expected data to be of type List<string>.");
 
-        var transcriber = settings.TranscriptionMode switch
-        {
-            TranscriptionMode.Whisper => transcriberFactory.Create(
-                new WhisperTranscriberOptions(
-                    settings.WhisperModelPath,
-                    new SileroVadOptions(settings.WhisperVadModelPath)
-                    {
-                        Threshold = settings.WhisperVadThreshold,
-                    }
-                )
-            ),
-            _ => throw new ArgumentOutOfRangeException(),
-        };
+        var transcriberOptions = GetTranscriberOptions(settings);
+        var transcriber = transcriberFactory.Create(transcriberOptions);
+
         RunTranscriber(data, transcriber, cancellationToken).Wait(cancellationToken);
         return 0;
     }
 
-    private static Task RunTranscriber(
+    private Task RunTranscriber(
         IEnumerable<string> inputs,
         ITranscriber transcriber,
         CancellationToken cancellationToken = default
     )
     {
-        foreach (var input in inputs)
-        {
-            transcriber.Transcribe(input, cancellationToken);
-        }
+        console
+            .Progress()
+            .Columns(
+                new TaskDescriptionColumn() { Alignment = Justify.Center },
+                new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
+                new CountColumn() { Style = Color.Blue },
+                new ElapsedTimeColumn() { Style = Style.Plain },
+                new SquareBracedRemainingTimeColumn() { Style = Style.Plain }
+            )
+            .HideCompleted(true)
+            .AutoClear(true)
+            .Start(ctx =>
+            {
+                var inputFiles = inputs.ToList();
+                var transcriptionTask = ctx.AddTask("...", maxValue: inputFiles.Count);
+
+                foreach (var input in inputFiles)
+                {
+                    transcriptionTask.Description = $"{Path.GetFileName(input)}";
+
+                    Transcribe(input, transcriber, ctx, cancellationToken);
+
+                    transcriptionTask.Increment(1);
+                }
+            });
 
         return Task.CompletedTask;
     }
 
-    private static Task RunTranslator(
-        IEnumerable<string> inputs,
-        ITranslator translator,
+    private static Result<ISubtitles> Transcribe(
+        string input,
+        ITranscriber transcriber,
+        ProgressContext progress,
         CancellationToken cancellationToken = default
     )
     {
-        return Task.CompletedTask;
+        var transcribeProgress = progress.AddTask("Transcribing...", maxValue: 100);
+        transcriber.ProgressChanged += (_, e) =>
+        {
+            transcribeProgress.Value = (e.Current / e.Total) * 100;
+        };
+
+        var result = transcriber.Transcribe(input, cancellationToken);
+
+        transcribeProgress.StopTask();
+        return result;
+    }
+
+    private ITranscriberOptions GetTranscriberOptions(RunSettings settings)
+    {
+        return settings.TranscriptionMode switch
+        {
+            TranscriptionMode.Whisper => GetWhisperTranscriberOptions(settings),
+            _ => throw new NotSupportedException(
+                $"Transcription mode {settings.TranscriptionMode} is not supported."
+            ),
+        };
+    }
+
+    private WhisperTranscriberOptions GetWhisperTranscriberOptions(RunSettings settings)
+    {
+        return new WhisperTranscriberOptions(
+            settings.WhisperModelPath,
+            new SileroVadOptions(settings.WhisperVadModelPath)
+            {
+                Threshold = settings.WhisperVadThreshold,
+            }
+        );
     }
 }

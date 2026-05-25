@@ -1,8 +1,8 @@
 namespace ASTranscriber.Transcription.Whisper;
 
-public class WhisperTranscriberFactory : IConcreteTranscriberFactory
+public class WhisperTranscriberFactory : ITranscriberFactory
 {
-    public ITranscriber CreateTranscriber(ITranscriberOptions options)
+    public ITranscriber Create(ITranscriberOptions options)
     {
         if (options is not WhisperTranscriberOptions optionsResult)
             throw new ArgumentException(
