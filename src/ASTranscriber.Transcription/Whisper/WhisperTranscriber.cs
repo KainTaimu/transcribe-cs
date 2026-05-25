@@ -12,15 +12,11 @@ using Whisper.net;
 
 namespace ASTranscriber.Transcription.Whisper;
 
-public class WhisperTranscriber(IPath modelPath) : ITranscriber
+public class WhisperTranscriber(IPath whisperModelPath) : ITranscriber
 {
-    public IPath ModelPath { get; } = modelPath;
-
     private readonly ILogger<WhisperTranscriber> _logger = LoggerFactory
         .Create(builder => builder.SetMinimumLevel(LogLevel.Debug).AddNLog())
         .CreateLogger<WhisperTranscriber>();
-
-    private static readonly string[] _allowedExtensions = [".wav", ".mp3", ".opus", ".m4a"];
 
     public Result<IPath> Start(
         IPath inputFile,
@@ -28,20 +24,12 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
         ProgressContext? progressContext = null
     )
     {
-        if (!ValidateInputFile(inputFile, out var validationError))
-            return Result.Fail(validationError);
-
-        if (!EnsureOutputDirectory(outputDirectory, out var dirError))
-            return Result.Fail(dirError);
-
-        var resolvedModelPath = ResolveModelPath(ModelPath);
-
-        var ensureModelResult = EnsureModelExists(resolvedModelPath, progressContext);
-        if (ensureModelResult.IsFailed)
-            return ensureModelResult;
-
-        if (!TryCreateDirectory(outputDirectory, out var mkdirError))
-            return Result.Fail(mkdirError);
+        if (!whisperModelPath.IsFile())
+        {
+            var downloadResult = DownloadModel(whisperModelPath, progressContext);
+            if (downloadResult.IsFailed)
+                return downloadResult.WithError("Failed to download model");
+        }
 
         var wavResult = ToWhisperSupportedWav(inputFile);
         if (wavResult.IsFailed)
@@ -49,7 +37,7 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
 
         var result = ProcessTranscription(
             wavResult.Value,
-            resolvedModelPath,
+            whisperModelPath,
             outputDirectory,
             progressContext
         );
@@ -60,80 +48,6 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
             );
 
         return result;
-    }
-
-    private bool ValidateInputFile(IPath inputFile, out string error)
-    {
-        error = string.Empty;
-
-        if (!inputFile.IsFile())
-        {
-            error = $"Input file \"{inputFile}\" is not a file or does not exist";
-            return false;
-        }
-
-        if (!_allowedExtensions.Contains(inputFile.Extension))
-        {
-            error = $"Unsupported file format: {inputFile.Extension}";
-            return false;
-        }
-
-        return true;
-    }
-
-    private bool EnsureOutputDirectory(IPath directory, out string error)
-    {
-        error = string.Empty;
-
-        if (directory.IsDir())
-            return true;
-
-        try
-        {
-            directory.Mkdir(true);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = $"Failed to create output directory \"{directory}\": {ex.Message}";
-            return false;
-        }
-    }
-
-    private bool TryCreateDirectory(IPath directory, out string error)
-    {
-        error = string.Empty;
-
-        try
-        {
-            directory.Mkdir(true);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = $"Failed to create directory \"{directory}\": {ex.Message}";
-            return false;
-        }
-    }
-
-    private IPath ResolveModelPath(IPath modelPath)
-    {
-        var resolved = modelPath;
-        if (!modelPath.ToString()!.EndsWith(".bin"))
-            resolved = modelPath.WithExtension(".bin");
-
-        if (!resolved.Parent().IsDir())
-            resolved.Parent().Mkdir();
-
-        return resolved;
-    }
-
-    private Result EnsureModelExists(IPath modelPath, ProgressContext? progressContext = null)
-    {
-        if (modelPath.IsFile())
-            return Result.Ok();
-
-        return DownloadModel(modelPath, progressContext);
     }
 
     private Result DownloadModel(IPath modelPath, ProgressContext? progressContext = null)
@@ -264,11 +178,6 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
         srt.WriteFile(outPath.ToPathString());
 
         return Result.Ok(outPath);
-    }
-
-    public IPath GetTranscriptionSrt()
-    {
-        throw new NotImplementedException();
     }
 
     private Result<IPath> ToWhisperSupportedWav(IPath path)

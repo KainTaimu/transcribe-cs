@@ -11,6 +11,4 @@ public interface ITranscriber
         IPath outputDirectory,
         ProgressContext? progressContext = null
     );
-
-    public IPath? GetTranscriptionSrt();
 }
