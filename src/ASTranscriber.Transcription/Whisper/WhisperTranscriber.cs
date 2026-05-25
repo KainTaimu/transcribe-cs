@@ -36,7 +36,7 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
 
         var resolvedModelPath = ResolveModelPath(ModelPath);
 
-        var ensureModelResult = EnsureModelExists(resolvedModelPath);
+        var ensureModelResult = EnsureModelExists(resolvedModelPath, progressContext);
         if (ensureModelResult.IsFailed)
             return ensureModelResult;
 
@@ -45,7 +45,7 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
 
         var wavResult = ToWhisperSupportedWav(inputFile);
         if (wavResult.IsFailed)
-            return Result.Fail(wavResult.Errors.First().Message);
+            return Result.Fail(wavResult.Errors[0].Message);
 
         var result = ProcessTranscription(
             wavResult.Value,
@@ -128,12 +128,12 @@ public class WhisperTranscriber(IPath modelPath) : ITranscriber
         return resolved;
     }
 
-    private Result EnsureModelExists(IPath modelPath)
+    private Result EnsureModelExists(IPath modelPath, ProgressContext? progressContext = null)
     {
         if (modelPath.IsFile())
             return Result.Ok();
 
-        return DownloadModel(modelPath);
+        return DownloadModel(modelPath, progressContext);
     }
 
     private Result DownloadModel(IPath modelPath, ProgressContext? progressContext = null)
