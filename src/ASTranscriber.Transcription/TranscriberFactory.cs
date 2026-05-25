@@ -1,3 +1,4 @@
+using ASTranscriber.Transcription.Dummy;
 using ASTranscriber.Transcription.Whisper;
 
 namespace ASTranscriber.Transcription;
@@ -8,11 +9,14 @@ public class TranscriberFactory : ITranscriberFactory
     {
         return options switch
         {
-            WhisperTranscriberOptions whisperTranscriberOptions => new WhisperTranscriber(
-                whisperTranscriberOptions.WhisperModelPath,
-                whisperTranscriberOptions.SileroVadOptions
+            DummyTranscriberOptions => new DummyTranscriber(),
+            WhisperTranscriberOptions whisperOptions => new WhisperTranscriber(
+                whisperOptions.WhisperModelPath,
+                whisperOptions.SileroVadOptions
             ),
-            _ => throw new ArgumentOutOfRangeException(nameof(options)),
+            _ => throw new ArgumentException(
+                $"Unsupported translator options type: {options.GetType().FullName}"
+            ),
         };
     }
 }

@@ -17,7 +17,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="../ASTranscriber.Translation/Sugoi/script/**/*">
+    <Content Include="../../script/**/*">
       <Link>script\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
@@ -33,9 +33,5 @@
     <PackageReference Include="Spectre.Console" Version="0.55.2" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
     <PackageReference Include="System.CommandLine" Version="2.0.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Services\" />
   </ItemGroup>
 </Project>

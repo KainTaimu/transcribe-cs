@@ -1,7 +1,5 @@
 ﻿namespace Subtitles;
 
-public class SrtParseException(string message) : Exception(message);
-
 public class Srt : ISubtitles
 {
     public readonly List<SrtLine> Lines = [];
@@ -9,9 +7,13 @@ public class Srt : ISubtitles
 
     public IEnumerator<SrtLine> GetEnumerator() => Lines.GetEnumerator();
 
-    public SrtLine GetLine(int index) => Lines[index];
-
     public void AddLine(string text, string start, string end)
+    {
+        var newLine = new SrtLine(text, LineCount + 1, start, end);
+        Lines.Add(newLine);
+    }
+
+    public void AddLine(string text, TimeSpan start, TimeSpan end)
     {
         var newLine = new SrtLine(text, LineCount + 1, start, end);
         Lines.Add(newLine);
@@ -22,10 +24,9 @@ public class Srt : ISubtitles
         Lines.Add(line);
     }
 
-    public ISubtitles Read(string filename)
+    public void Read(string filename)
     {
-        var srt = new Srt();
-
+        Lines.Clear();
         using var reader = new StreamReader(filename);
 
         while (reader.ReadLine() is { } line)
@@ -37,8 +38,8 @@ public class Srt : ISubtitles
             var entry = new SrtLine();
 
             // 1. Index line
-            if (!int.TryParse(line.Trim(), out int index))
-                continue;
+            if (!int.TryParse(line.Trim(), out var index))
+                throw new SrtParseException("Expected line index but reached end of file.");
             entry.LineNumber = index;
 
             // 2. Timestamp line
@@ -48,7 +49,7 @@ public class Srt : ISubtitles
 
             var parts = line.Split([" --> "], StringSplitOptions.None);
             if (parts.Length != 2)
-                continue;
+                throw new SrtParseException("Expected timestamp line but got invalid line.");
 
             entry.StartString = parts[0].Trim().Replace(',', '.');
             entry.EndString = parts[1].Trim().Replace(',', '.');
@@ -59,10 +60,26 @@ public class Srt : ISubtitles
                 textLines.Add(line);
 
             entry.Text = string.Join(Environment.NewLine, textLines);
-            srt.AddLine(entry);
+            AddLine(entry);
+        }
+    }
+
+    public bool TryRead(string filename)
+    {
+        try
+        {
+            Read(filename);
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (SrtParseException)
+        {
+            return false;
         }
 
-        return srt;
+        return true;
     }
 
     public void WriteFile(string filename)

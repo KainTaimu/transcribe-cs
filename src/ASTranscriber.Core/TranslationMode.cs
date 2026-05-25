@@ -2,7 +2,8 @@ namespace ASTranscriber.Core;
 
 public enum TranslationMode
 {
-    None,
+    Dummy,
     Whisper,
     Sugoi,
+    SugoiLlama,
 }

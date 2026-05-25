@@ -1,4 +1,4 @@
-using ASTranscriber.Transcription.Whisper;
+using ASTranscriber.Core;
 using FluentResults;
 using Subtitles;
 

@@ -1,3 +1,4 @@
+using ASTranscriber.Core;
 using EchoSharp.Abstractions.SpeechTranscription;
 using EchoSharp.Abstractions.VoiceActivityDetection;
 using EchoSharp.Audio;
@@ -36,6 +37,11 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             return Result.Fail(wavResult.Errors[0].Message);
 
         var result = ProcessTranscription(wavResult.Value, cancellationToken);
+
+        if (wavResult.IsSuccess)
+            File.Delete(wavResult.Value);
+        if (result.IsSuccess)
+            result.Value.WriteFile(Path.GetTempFileName());
 
         return result.Map(ISubtitles (srt) => srt);
     }
@@ -119,26 +125,26 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
 
         await foreach (var segmentEvent in transcriptor.TranscribeAsync(awaitableSource, ct))
         {
+            if (ct.IsCancellationRequested)
+                break;
+
             var speechSegment = segmentEvent as RealtimeSegmentRecognized;
             if (speechSegment is null)
                 continue;
 
             var result = speechSegment.Segment;
-
             var end = result.StartTime + result.Duration;
 
-            AnsiConsole.MarkupLine($"[[{result.StartTime:G}->{end:G}]] {result.Text}");
-            srt.AddLine(result.Text, result.StartTime.ToString(), end.ToString());
+            AnsiConsole.MarkupLine($"[dim][[{result.StartTime:G}->{end:G}]][/] {result.Text}");
+            srt.AddLine(result.Text, result.StartTime, end);
 
             OnProgressChanged(
                 new ProgressEventHandler(
                     (float)result.StartTime.TotalSeconds,
-                    (float)total.TotalSeconds
+                    (float)total.TotalSeconds,
+                    false
                 )
             );
-
-            if (ct.IsCancellationRequested)
-                break;
         }
 
         return Result.Ok(srt);
