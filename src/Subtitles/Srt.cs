@@ -1,8 +1,6 @@
-﻿using System.Text;
+﻿namespace Subtitles;
 
-namespace Subtitles;
-
-public class SrtParseException : Exception;
+public class SrtParseException(string message) : Exception(message);
 
 public class Srt : ISubtitles
 {
@@ -24,14 +22,13 @@ public class Srt : ISubtitles
         Lines.Add(line);
     }
 
-    public static bool TryReadFile(string filename, out Srt srt)
+    public ISubtitles Read(string filename)
     {
-        srt = new Srt();
+        var srt = new Srt();
 
         using var reader = new StreamReader(filename);
-        string line;
 
-        while ((line = reader.ReadLine()) != null)
+        while (reader.ReadLine() is { } line)
         {
             // Skip blank lines
             if (string.IsNullOrWhiteSpace(line))
@@ -47,7 +44,7 @@ public class Srt : ISubtitles
             // 2. Timestamp line
             line = reader.ReadLine();
             if (line == null)
-                return false;
+                throw new SrtParseException("Expected timestamp line but reached end of file.");
 
             var parts = line.Split([" --> "], StringSplitOptions.None);
             if (parts.Length != 2)
@@ -65,7 +62,7 @@ public class Srt : ISubtitles
             srt.AddLine(entry);
         }
 
-        return true;
+        return srt;
     }
 
     public void WriteFile(string filename)

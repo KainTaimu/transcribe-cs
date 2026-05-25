@@ -1,34 +1,28 @@
 using System.Diagnostics;
 using System.Threading.Channels;
-using ASTranscriber.Core.Extensions;
 using FluentResults;
-using PathLib;
 using Spectre.Console;
 using Subtitles;
 
 namespace ASTranscriber.Translation;
 
-public class SugoiTranslator(IPath sugoiModelDirPath) : ITranslator
+public class SugoiTranslator(string sugoiModelPath) : ITranslator
 {
-    public IPath SugoiModelDirPath { get; } = sugoiModelDirPath;
+    private string SugoiModelPath { get; } = sugoiModelPath;
 
-    public Result<IPath> Start(
-        IPath srtPath,
-        IPath outputDirectory,
-        ProgressContext? progressContext = null
-    )
+    public Result<ISubtitles> Translate(ISubtitles subtitles)
     {
         if (Environment.OSVersion.Platform != PlatformID.Unix)
             throw new PlatformNotSupportedException(
                 "SugoiTranslator is only supported on Unix-based systems."
             );
-        var task = progressContext?.AddTask("Translating", maxValue: 1);
-        task?.IsIndeterminate = true;
+        if (subtitles is not Srt)
+            throw new ArgumentException("Only SRT subtitles are supported.");
 
-        if (!Srt.TryReadFile(srtPath.ToPathString(), out var srt))
-            return Result.Fail("Failed to read SRT file.");
+        var srtPath = $"orig.{Path.GetTempFileName()}.srt";
+        subtitles.WriteFile(srtPath);
 
-        var outputPath = outputDirectory / (srtPath.BasenameWithoutExtensions + "_translated.srt");
+        var outputPath = $"translated.{Path.GetTempFileName()}.srt";
 
         using var cts = new CancellationTokenSource();
         var handler = CreateCancelEventHandler(cts);
@@ -42,11 +36,11 @@ public class SugoiTranslator(IPath sugoiModelDirPath) : ITranslator
                     "-u",
                     "/home/erwin/Projects/csharp/transcribe-cs/src/ASTranscriber.Translation/Sugoi/script/translate.py",
                     "--input",
-                    srtPath.ToPathString(),
+                    srtPath,
                     "--output",
-                    outputPath.ToPathString(),
+                    outputPath,
                     "--model",
-                    SugoiModelDirPath.Resolve().ToPathString(),
+                    SugoiModelPath,
                 ],
                 cts.Token
             );
@@ -55,8 +49,6 @@ public class SugoiTranslator(IPath sugoiModelDirPath) : ITranslator
         }
         catch (OperationCanceledException)
         {
-            task?.StopTask();
-            AnsiConsole.MarkupLine("[red]Cancelled[/]");
             Console.CancelKeyPress -= handler;
             return Result.Fail("Translation cancelled");
         }
@@ -65,12 +57,8 @@ public class SugoiTranslator(IPath sugoiModelDirPath) : ITranslator
             Console.CancelKeyPress -= handler;
         }
 
-        task?.StopTask();
-
-        AnsiConsole.MarkupLine(
-            $"[blue]Translation completed: {Markup.Escape(outputPath.Basename)}[/]"
-        );
-        return Result.Ok(outputPath);
+        var outSrt = new Srt().Read(outputPath);
+        return Result.Ok(outSrt);
     }
 
     private static async Task RunProcessAsync(
@@ -122,15 +110,6 @@ public class SugoiTranslator(IPath sugoiModelDirPath) : ITranslator
         }
 
         await process.WaitForExitAsync(cancellationToken);
-    }
-
-    public Task<Result<IPath>> StartAsyc(
-        IPath srtPath,
-        IPath outputDirectory,
-        ProgressContext? progressContext = null
-    )
-    {
-        throw new NotImplementedException();
     }
 
     private static ConsoleCancelEventHandler CreateCancelEventHandler(CancellationTokenSource cts)

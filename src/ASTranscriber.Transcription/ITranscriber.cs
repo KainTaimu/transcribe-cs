@@ -1,14 +1,15 @@
+using ASTranscriber.Transcription.Whisper;
 using FluentResults;
-using PathLib;
-using Spectre.Console;
+using Subtitles;
 
 namespace ASTranscriber.Transcription;
 
 public interface ITranscriber
 {
-    public Result<IPath> Start(
-        IPath inputFile,
-        IPath outputDirectory,
-        ProgressContext? progressContext = null
+    event EventHandler<ProgressEventHandler>? ProgressChanged;
+
+    public Result<ISubtitles> Transcribe(
+        string fileName,
+        CancellationToken cancellationToken = default
     );
 }
