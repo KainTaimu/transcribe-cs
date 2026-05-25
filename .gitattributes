@@ -1,0 +1,2 @@
+binaries/llama-server filter=lfs diff=lfs merge=lfs -text
+binaries/whisper-vad-speech-segments filter=lfs diff=lfs merge=lfs -text

@@ -12,7 +12,16 @@
 
     <!-- Remove locale resource directories from System.CommandLine -->
     <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="../ASTranscriber.Translation/Sugoi/script/**/*">
+      <Link>script\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ASTranscriber.Transcription\ASTranscriber.Transcription.csproj" />
@@ -20,6 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
     <PackageReference Include="System.CommandLine" Version="2.0.3" />
   </ItemGroup>
 </Project>

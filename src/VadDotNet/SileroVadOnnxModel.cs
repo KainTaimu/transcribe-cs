@@ -54,28 +54,22 @@ public class SileroVadOnnxModel : IDisposable
     private static ValidationResult ValidateInput(float[][] x, int sr)
     {
         if (x.Length == 1)
-        {
             x = [x[0]];
-        }
         if (x.Length > 2)
-        {
             throw new ArgumentException($"Incorrect audio data dimension: {x[0].Length}");
-        }
 
-        if (sr != 16000 && (sr % 16000 == 0))
+        if (sr != 16000 && sr % 16000 == 0)
         {
-            int step = sr / 16000;
-            float[][] reducedX = new float[x.Length][];
+            var step = sr / 16000;
+            var reducedX = new float[x.Length][];
 
-            for (int i = 0; i < x.Length; i++)
+            for (var i = 0; i < x.Length; i++)
             {
-                float[] current = x[i];
-                float[] newArr = new float[(current.Length + step - 1) / step];
+                var current = x[i];
+                var newArr = new float[(current.Length + step - 1) / step];
 
                 for (int j = 0, index = 0; j < current.Length; j += step, index++)
-                {
                     newArr[index] = current[j];
-                }
 
                 reducedX[i] = newArr;
             }
@@ -91,10 +85,8 @@ public class SileroVadOnnxModel : IDisposable
             );
         }
 
-        if (((float)sr) / x[0].Length > 31.25)
-        {
+        if ((float)sr / x[0].Length > 31.25)
             throw new ArgumentException("Input audio is too short");
-        }
 
         return new ValidationResult(x, sr);
     }
@@ -102,16 +94,14 @@ public class SileroVadOnnxModel : IDisposable
     private static float[][] Concatenate(float[][] a, float[][] b)
     {
         if (a.Length != b.Length)
-        {
             throw new ArgumentException("The number of rows in both arrays must be the same.");
-        }
 
-        int rows = a.Length;
-        int colsA = a[0].Length;
-        int colsB = b[0].Length;
-        float[][] result = new float[rows][];
+        var rows = a.Length;
+        var colsA = a[0].Length;
+        var colsB = b[0].Length;
+        var result = new float[rows][];
 
-        for (int i = 0; i < rows; i++)
+        for (var i = 0; i < rows; i++)
         {
             result[i] = new float[colsA + colsB];
             Array.Copy(a[i], 0, result[i], 0, colsA);
@@ -123,8 +113,8 @@ public class SileroVadOnnxModel : IDisposable
 
     private static float[][] GetLastColumns(float[][] array, int contextSize)
     {
-        int rows = array.Length;
-        int cols = array[0].Length;
+        var rows = array.Length;
+        var cols = array[0].Length;
 
         if (contextSize > cols)
         {
@@ -133,9 +123,9 @@ public class SileroVadOnnxModel : IDisposable
             );
         }
 
-        float[][] result = new float[rows][];
+        var result = new float[rows][];
 
-        for (int i = 0; i < rows; i++)
+        for (var i = 0; i < rows; i++)
         {
             result[i] = new float[contextSize];
             Array.Copy(array[i], cols - contextSize, result[i], 0, contextSize);
@@ -149,7 +139,7 @@ public class SileroVadOnnxModel : IDisposable
         var result = ValidateInput(x, sr);
         x = result.X;
         sr = result.Sr;
-        int numberSamples = sr == 16000 ? 512 : 256;
+        var numberSamples = sr == 16000 ? 512 : 256;
 
         if (x[0].Length != numberSamples)
         {
@@ -158,29 +148,21 @@ public class SileroVadOnnxModel : IDisposable
             );
         }
 
-        int batchSize = x.Length;
-        int contextSize = sr == 16000 ? 64 : 32;
+        var batchSize = x.Length;
+        var contextSize = sr == 16000 ? 64 : 32;
 
         if (lastBatchSize == 0)
-        {
             ResetStates();
-        }
         if (lastSr != 0 && lastSr != sr)
-        {
             ResetStates();
-        }
         if (lastBatchSize != 0 && lastBatchSize != batchSize)
-        {
             ResetStates();
-        }
 
         if (context.Length == 0)
         {
             context = new float[batchSize][];
-            for (int i = 0; i < batchSize; i++)
-            {
+            for (var i = 0; i < batchSize; i++)
                 context[i] = new float[contextSize];
-            }
         }
 
         x = Concatenate(context, x);
@@ -210,16 +192,14 @@ public class SileroVadOnnxModel : IDisposable
         lastBatchSize = batchSize;
 
         state = new float[newState.Dimensions[0]][][];
-        for (int i = 0; i < newState.Dimensions[0]; i++)
+        for (var i = 0; i < newState.Dimensions[0]; i++)
         {
             state[i] = new float[newState.Dimensions[1]][];
-            for (int j = 0; j < newState.Dimensions[1]; j++)
+            for (var j = 0; j < newState.Dimensions[1]; j++)
             {
                 state[i][j] = new float[newState.Dimensions[2]];
-                for (int k = 0; k < newState.Dimensions[2]; k++)
-                {
+                for (var k = 0; k < newState.Dimensions[2]; k++)
                     state[i][j][k] = newState[i, j, k];
-                }
             }
         }
 

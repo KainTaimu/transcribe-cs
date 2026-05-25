@@ -2,10 +2,11 @@
   <Folder Name="/src/">
     <Project Path="src/ASTranscriber.Cli/ASTranscriber.Cli.csproj" />
     <Project Path="src/ASTranscriber.Core/ASTranscriber.Core.csproj" />
-    <Project Path="src/ASTranscriber.Testing/ASTranscriber.Testing.csproj" />
     <Project Path="src/ASTranscriber.Translation/ASTranscriber.Translation.csproj" />
     <Project Path="src/ASTranscriber.Utils/ASTranscriber.Utils.csproj" />
     <Project Path="src/Subtitles/Subtitles.csproj" />
-    <Project Path="src\ASTranscriber.Transcription\ASTranscriber.Transcription.csproj" />
+    <Project Path="src/ASTranscriber.Transcription.Dev/ASTranscriber.Transcription.Dev.csproj" />
+    <Project Path="src/ASTranscriber.Transcription/ASTranscriber.Transcription.csproj" />
+    <Project Path="src/VadDotNet/VadDotNet.csproj" />
   </Folder>
 </Solution>
