@@ -9,15 +9,26 @@ namespace ASTranscriber.Cli;
 
 public static class Program
 {
+    private static int _cancelKeyPressCount;
+
     public static async Task<int> Main(string[] args)
     {
         var cts = new CancellationTokenSource();
 
         Console.CancelKeyPress += (_, eventArgs) =>
         {
-            eventArgs.Cancel = true;
             cts.Cancel();
-            AnsiConsole.MarkupLine("[yellow]Cancellation requested.[/]");
+            _cancelKeyPressCount++;
+            if (_cancelKeyPressCount >= 3)
+            {
+                AnsiConsole.MarkupLine("[red]Force quitting.[/]");
+                eventArgs.Cancel = false;
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Cancellation requested.[/]");
+                eventArgs.Cancel = true;
+            }
         };
 
         var services = new ServiceCollection();

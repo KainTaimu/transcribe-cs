@@ -1,5 +1,5 @@
 using ASTranscriber.Translation.Dummy;
-using ASTranscriber.Translation.SugoiLlama;
+using ASTranscriber.Translation.LlamaServer;
 
 namespace ASTranscriber.Translation;
 
@@ -11,9 +11,7 @@ public class TranslatorFactory : ITranslatorFactory
         {
             DummyTranslatorOptions => new DummyTranslator(),
             SugoiTranslatorOptions sugoiOptions => new SugoiTranslator(sugoiOptions.SugoiModelPath),
-            SugoiLlamaTranslatorOptions sugoiLlamaOptions => new SugoiLlamaTranslator(
-                sugoiLlamaOptions
-            ),
+            LlamaServerTranslatorOptions llamaOptions => new LlamaServerTranslator(llamaOptions),
             _ => throw new ArgumentException(
                 $"Unsupported translator options type: {options.GetType().FullName}"
             ),

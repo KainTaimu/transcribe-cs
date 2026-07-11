@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
@@ -10,10 +11,10 @@ using Newtonsoft.Json.Serialization;
 using Spectre.Console;
 using Subtitles;
 
-namespace ASTranscriber.Translation.SugoiLlama;
+namespace ASTranscriber.Translation.LlamaServer;
 
-public class SugoiLlamaTranslator(
-    SugoiLlamaTranslatorOptions options,
+public class LlamaServerTranslator(
+    LlamaServerTranslatorOptions options,
     string llamaServerBinaryPath = "llama-server"
 ) : ITranslator
 {
@@ -26,7 +27,7 @@ public class SugoiLlamaTranslator(
 
     private Process? _llamaServer;
 
-    private const string SUGOI_SYSTEM_PROMPT =
+    private const string SYSTEM_PROMPT =
         "You are a translation engine. Translate the following Japanese subtitle lines to natural English. "
         + "Return only the translated text. No preamble, no explanation, no notes.";
 
@@ -43,7 +44,7 @@ public class SugoiLlamaTranslator(
         if (subtitles is not Srt srt)
             throw new ArgumentException("Only SRT subtitles are supported.");
 
-        StartServer();
+        StartServer(cancellationToken);
         WaitForServerAsync(cancellationToken: cancellationToken).Wait(cancellationToken);
 
         var srtPath = $"{Path.GetTempFileName()}_orig.srt";
@@ -58,31 +59,32 @@ public class SugoiLlamaTranslator(
             while (!ResponseCleaner.IsTextValid(translation) && retries < maxTries)
             {
                 AnsiConsole.Markup(
-                    $"[dim]Got invalid line:\n{Markup.Escape(translation)}.\nAttempt "
-                        + $"{retries++}/{maxTries}[/]\n"
+                    $"[dim][[{line.Start:g}->{line.End:g}]] [strikethrough]{translation.Replace("\n", " ")}[/][/]"
                 );
                 translation = SendLine(line.Text, cancellationToken).Result;
+                retries++;
             }
 
             if (retries == maxTries)
-            {
-                AnsiConsole.Markup(
-                    $"[yellow]Got invalid line:\n{Markup.Escape(translation)}.\nSkipping[/]\n"
-                );
                 continue;
-            }
+            translation = translation.Trim("\"").ToString();
 
             var translatedLine = new SrtLine(translation, line.LineNumber, line.Start, line.End);
-            AnsiConsole.MarkupLine(
-                $"[dim][[{line.Start:G}->{line.End:G}]][/] {translatedLine.Text}"
-            );
+            var cleanedLine = Markup.Escape(translatedLine.Text.Replace("\n", " "));
+            AnsiConsole.MarkupLine($"[dim][[{line.Start:G}->{line.End:G}]][/] {cleanedLine}");
             outSrt.AddLine(translatedLine);
 
             OnProgressChanged(
-                new ProgressEventHandler(translatedLine.LineNumber, srt.LineCount, false)
+                new ProgressEventHandler(
+                    translatedLine.LineNumber,
+                    srt.LineCount,
+                    "Translating",
+                    false
+                )
             );
         }
 
+        _llamaServer?.Kill(true);
         return Result.Ok<ISubtitles>(outSrt);
     }
 
@@ -101,7 +103,7 @@ public class SugoiLlamaTranslator(
         {
             Messages =
             [
-                new LlamaServerChatMessage("system", SUGOI_SYSTEM_PROMPT),
+                new LlamaServerChatMessage("system", SYSTEM_PROMPT),
                 new LlamaServerChatMessage("user", CreatePrompt(line)),
             ],
         };
@@ -131,12 +133,12 @@ public class SugoiLlamaTranslator(
         return deserialized?.Choices[0].Message.Content ?? "...";
     }
 
-    private void StartServer()
+    private void StartServer(CancellationToken cancellationToken = default)
     {
         try
         {
-            var res = _client.GetAsync("health");
-            res.Wait();
+            var res = _client.GetAsync("health", cancellationToken);
+            res.Wait(cancellationToken);
             if (res.Result.IsSuccessStatusCode)
                 return;
         }
@@ -156,6 +158,9 @@ public class SugoiLlamaTranslator(
             },
             EnableRaisingEvents = true,
         };
+        var parentProcess = Process.GetCurrentProcess();
+        parentProcess.Exited += (_, _) => TerminateLlamaServer();
+
         llamaServerProcess.Start();
         _llamaServer = llamaServerProcess;
 

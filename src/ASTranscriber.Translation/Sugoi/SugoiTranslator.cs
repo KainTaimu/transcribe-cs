@@ -45,7 +45,7 @@ public class SugoiTranslator(string sugoiModelPath) : ITranslator
             cancellationToken
         );
 
-        ProgressChanged?.Invoke(this, new ProgressEventHandler(-1, -1));
+        ProgressChanged?.Invoke(this, new ProgressEventHandler(-1, -1, "Translating"));
 
         processTask.Wait(cancellationToken);
 

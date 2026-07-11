@@ -1,6 +1,6 @@
-namespace ASTranscriber.Translation.SugoiLlama;
+namespace ASTranscriber.Translation.LlamaServer;
 
-public class SugoiLlamaTranslatorOptions(string llamaServerPath, string sugoiModelPath)
+public class LlamaServerTranslatorOptions(string llamaServerPath, string sugoiModelPath)
     : ITranslatorOptions
 {
     public readonly string LlamaServerPath = llamaServerPath;

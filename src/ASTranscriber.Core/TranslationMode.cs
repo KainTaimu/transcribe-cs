@@ -5,5 +5,5 @@ public enum TranslationMode
     Dummy,
     Whisper,
     Sugoi,
-    SugoiLlama,
+    LlamaServer,
 }

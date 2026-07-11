@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using ASTranscriber.Core;
+using ASTranscriber.Core.Extensions;
 using ASTranscriber.Transcription;
 using ASTranscriber.Transcription.Dummy;
 using ASTranscriber.Transcription.Whisper;
+using ASTranscriber.Transcription.WhisperCli;
 using ASTranscriber.Translation;
 using ASTranscriber.Translation.Dummy;
-using ASTranscriber.Translation.SugoiLlama;
+using ASTranscriber.Translation.LlamaServer;
 using EchoSharp.Onnx.SileroVad;
 using FluentResults;
 using Spectre.Console;
@@ -17,33 +19,43 @@ namespace ASTranscriber.Cli.Commands;
 public class RunSettings : CommandSettings
 {
     [CommandOption("-t|--transcriber")]
-    [Description("The transcriber to use. (Whisper)")]
-    [DefaultValue(TranscriptionMode.Whisper)]
-    public TranscriptionMode TranscriptionMode { get; init; } = TranscriptionMode.Whisper;
+    [Description("The transcriber to use.")]
+    [DefaultValue(TranscriptionMode.WhisperCli)]
+    public TranscriptionMode TranscriptionMode { get; init; } = TranscriptionMode.WhisperCli;
 
-    [CommandOption("--whisper-model")]
+    [CommandOption("-s|--translate")]
+    [Description("The translator to use. (LlamaServer, Sugoi)")]
+    [DefaultValue(TranslationMode.LlamaServer)]
+    public TranslationMode TranslationMode { get; init; } = TranslationMode.LlamaServer;
+
+    [CommandOption("-l|--language")]
+    [Description("The language of the original files.")]
+    [DefaultValue("auto")]
+    public string Language { get; init; } = "auto";
+
+    [CommandOption("-m|--whisper-model")]
     [Description("The path to the Whisper model to use.")]
     [DefaultValue("models/ggml-large-v3-q5_0.bin")]
     public string WhisperModelPath { get; init; } = "models/ggml-large-v3-q5_0.bin";
 
+    [CommandOption("--no-whisper-vad")]
+    [Description("Should not use Silero VAD for whisper transcriptions?")]
+    [DefaultValue(false)]
+    public bool DontUseWhisperVad { get; init; } = false;
+
     [CommandOption("--whisper-vad-model")]
     [Description("The path to the Silero VAD model to use.")]
-    [DefaultValue("models/silero_vad.onnx")]
-    public string WhisperVadModelPath { get; init; } = "models/silero_vad.onnx";
+    [DefaultValue("models/ggml-silero-v6.2.0.bin")]
+    public string WhisperVadModelPath { get; init; } = "models/ggml-silero-v6.2.0.bin";
 
     [CommandOption("--whisper-vad-threshold")]
     [DefaultValue(0.005f)]
     public float WhisperVadThreshold { get; init; } = 0.005f;
 
-    [CommandOption("-s|--translate")]
-    [Description("The translator to use. (Sugoi,SugoiLlama)")]
-    [DefaultValue(TranslationMode.Sugoi)]
-    public TranslationMode TranslationMode { get; init; } = TranslationMode.Sugoi;
-
-    [CommandOption("--sugoi-model")]
-    [Description("The path to the Sugoi model to use.")]
-    [DefaultValue("models/Sugoi-14B-Ultra-Q2_K.gguf")]
-    public string SugoiModelPath { get; init; } = "models/Sugoi-14B-Ultra-Q2_K.gguf";
+    [CommandOption("--llama-model")]
+    [Description("The path to the Llama server model to use.")]
+    [DefaultValue("models/HY-MT2-7B-Q8_0.gguf")]
+    public string LlamaServerModelPath { get; init; } = "models/HY-MT2-7B-Q8_0.gguf";
 }
 
 public class RunCommand(
@@ -67,7 +79,42 @@ public class RunCommand(
         var translatorOptions = GetTranslatorOptions(settings);
         var translator = translatorFactory.Create(translatorOptions);
 
-        RunTranscriber(data, transcriber, translator, cancellationToken).Wait(cancellationToken);
+        console
+            .Progress()
+            .Columns(
+                new TaskDescriptionColumn() { Alignment = Justify.Center },
+                new ProgressBarColumn() { CompletedStyle = Color.FromHex("#c6a0f6") },
+                new CountColumn() { Style = Color.FromHex("c6a0f6") },
+                new ElapsedTimeColumn() { Style = Style.Plain }
+            )
+            .HideCompleted(true)
+            .AutoClear(true)
+            .Start(ctx =>
+            {
+                try
+                {
+                    RunTranscriber(
+                            data,
+                            "outputs/",
+                            transcriber,
+                            translator,
+                            ctx,
+                            cancellationToken
+                        )
+                        .Wait(cancellationToken);
+                }
+                catch (OperationCanceledException) { }
+                catch (AggregateException ex)
+                {
+                    if (ex.GetBaseException().Message == "A task was canceled.")
+                        return;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.WriteLine($"Thrown exception: {ex}");
+                }
+            });
 
         console.MarkupLine("[blue][bold]Done.[/][/]");
         return 0;
@@ -75,58 +122,47 @@ public class RunCommand(
 
     private Task RunTranscriber(
         IEnumerable<string> inputs,
+        string outputDirectory,
         ITranscriber transcriber,
         ITranslator translator,
+        ProgressContext ctx,
         CancellationToken cancellationToken = default
     )
     {
-        console
-            .Progress()
-            .Columns(
-                new TaskDescriptionColumn() { Alignment = Justify.Center },
-                new ProgressBarColumn() { CompletedStyle = new Style(Color.Blue) },
-                new CountColumn() { Style = Color.Blue },
-                new ElapsedTimeColumn() { Style = Style.Plain }
-            )
-            .HideCompleted(true)
-            .AutoClear(true)
-            .Start(ctx =>
+        var inputFiles = inputs.ToList();
+        var transcriptionTask = ctx.AddTask("...", maxValue: inputFiles.Count);
+
+        foreach (var input in inputFiles)
+        {
+            var filename = Path.GetFileName(input);
+            var filenameNoExt = Path.GetFileNameWithoutExtension(input);
+            transcriptionTask?.Description = Markup.Escape(filename);
+
+            var srtResult = Transcribe(input, transcriber, ctx, cancellationToken);
+            if (srtResult.IsFailed)
             {
-                var inputFiles = inputs.ToList();
-                // ctx = null;
-                var transcriptionTask = ctx?.AddTask("...", maxValue: inputFiles.Count);
+                console.WriteLine(srtResult.UnwindErrors("failed to transcribe"), Color.Red);
+                transcriptionTask?.Increment(1);
+                continue;
+            }
 
-                foreach (var input in inputFiles)
-                {
-                    transcriptionTask?.Description = $"{Path.GetFileName(input)}";
+            var translateResult = Translate(srtResult.Value, translator, ctx, cancellationToken);
+            if (translateResult.IsFailed)
+            {
+                console.WriteLine(translateResult.UnwindErrors("failed to translate"), Color.Red);
+                transcriptionTask?.Increment(1);
+                continue;
+            }
+            translateResult.Value.WriteFile(
+                Path.Join(
+                    outputDirectory,
+                    $"{Path.ChangeExtension(filenameNoExt, ".srt")
+                        }"
+                )
+            );
 
-                    var srtResult = Transcribe(input, transcriber, ctx, cancellationToken);
-                    if (srtResult.IsFailed)
-                    {
-                        console.WriteLine($"Failed to transcribe {input}: {srtResult}", Color.Red);
-                        transcriptionTask?.Increment(1);
-                        continue;
-                    }
-
-                    var translateResult = Translate(
-                        srtResult.Value,
-                        translator,
-                        ctx,
-                        cancellationToken
-                    );
-                    if (translateResult.IsFailed)
-                    {
-                        console.WriteLine(
-                            $"Failed to translate {input}: {translateResult}",
-                            Color.Red
-                        );
-                        transcriptionTask?.Increment(1);
-                        continue;
-                    }
-
-                    transcriptionTask?.Increment(1);
-                }
-            });
+            transcriptionTask?.Increment(1);
+        }
 
         return Task.CompletedTask;
     }
@@ -141,6 +177,7 @@ public class RunCommand(
         var transcribeProgress = progress?.AddTask("Transcribing...", maxValue: 100);
         transcriber.ProgressChanged += (_, e) =>
         {
+            transcribeProgress?.Description = e.Description;
             transcribeProgress?.IsIndeterminate = e.IsIndeterminate;
             transcribeProgress?.Value = (e.Current / e.Total) * 100;
         };
@@ -161,6 +198,7 @@ public class RunCommand(
         var translateTask = progress?.AddTask("Translating...", maxValue: 100);
         translator.ProgressChanged += (_, e) =>
         {
+            translateTask?.Description = e.Description;
             translateTask?.IsIndeterminate = e.IsIndeterminate;
             translateTask?.Value = (e.Current / e.Total) * 100;
         };
@@ -177,6 +215,16 @@ public class RunCommand(
         {
             TranscriptionMode.Dummy => new DummyTranscriberOptions(),
             TranscriptionMode.Whisper => GetWhisperTranscriberOptions(settings),
+            TranscriptionMode.WhisperCli => new WhisperCliTranscriberOptions(
+                settings.WhisperModelPath,
+                settings.Language,
+                settings.DontUseWhisperVad
+                    ? null
+                    : new WhisperCliVadOptions(
+                        settings.WhisperVadModelPath,
+                        settings.WhisperVadThreshold
+                    )
+            ),
             _ => throw new NotSupportedException(
                 $"Transcription mode {settings.TranscriptionMode} is not supported."
             ),
@@ -187,10 +235,12 @@ public class RunCommand(
     {
         return new WhisperTranscriberOptions(
             settings.WhisperModelPath,
-            new SileroVadOptions(settings.WhisperVadModelPath)
-            {
-                Threshold = settings.WhisperVadThreshold,
-            }
+            settings.DontUseWhisperVad
+                ? null
+                : new SileroVadOptions(settings.WhisperVadModelPath)
+                {
+                    Threshold = settings.WhisperVadThreshold,
+                }
         );
     }
 
@@ -199,10 +249,10 @@ public class RunCommand(
         return settings.TranslationMode switch
         {
             TranslationMode.Dummy => new DummyTranslatorOptions(),
-            TranslationMode.Sugoi => new SugoiTranslatorOptions(settings.SugoiModelPath),
-            TranslationMode.SugoiLlama => new SugoiLlamaTranslatorOptions(
+            TranslationMode.Sugoi => new SugoiTranslatorOptions(settings.LlamaServerModelPath),
+            TranslationMode.LlamaServer => new LlamaServerTranslatorOptions(
                 "llama-server",
-                settings.SugoiModelPath
+                settings.LlamaServerModelPath
             ),
             _ => throw new NotSupportedException(
                 $"Translation mode {settings.TranslationMode} is not supported."

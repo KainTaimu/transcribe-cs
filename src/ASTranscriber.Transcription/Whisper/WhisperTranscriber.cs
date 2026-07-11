@@ -46,15 +46,11 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
         return result.Map(ISubtitles (srt) => srt);
     }
 
-    private Result<Srt> ProcessTranscription(
-        string wavFile,
-        CancellationToken ct,
-        ProgressContext? progressContext = null
-    )
+    private Result<Srt> ProcessTranscription(string wavFile, CancellationToken ct)
     {
         Srt? srt = null;
         var srtTask = sileroVadOptions is null
-            ? RunWhisper(wavFile, ct, progressContext)
+            ? RunWhisper(wavFile, ct)
             : RunWhisperVad(wavFile, sileroVadOptions, ct);
 
         srtTask.Wait(ct);
@@ -81,21 +77,14 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
         var processor = whisperFactory
             .CreateBuilder()
             .WithLanguage("auto")
-            .WithNoContext()
-            .WithTemperature(0)
-            .WithSuppressRegex("");
+            .WithNoSpeechThreshold(vadOptions.Threshold);
         var whisperSpeechTranscriptor = new WhisperSpeechTranscriptorFactory(processor);
 
         var sileroFactory = new SileroVadDetectorFactory(vadOptions);
 
         var realTimeFactory = new EchoSharpRealtimeTranscriptorFactory(
             whisperSpeechTranscriptor,
-            sileroFactory,
-            vadDetectorOptions: new VadDetectorOptions()
-            {
-                MinSilenceDuration = new TimeSpan(0, 0, 0, 0, 100),
-                MinSpeechDuration = new TimeSpan(0, 0, 0, 0, 250),
-            }
+            sileroFactory
         );
 
         var transcriptor = realTimeFactory.Create(
@@ -142,6 +131,7 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
                 new ProgressEventHandler(
                     (float)result.StartTime.TotalSeconds,
                     (float)total.TotalSeconds,
+                    "Transcribing",
                     false
                 )
             );
@@ -150,16 +140,7 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
         return Result.Ok(srt);
     }
 
-    private void OnProgressChanged(ProgressEventHandler e)
-    {
-        ProgressChanged?.Invoke(this, e);
-    }
-
-    private async Task<Result<Srt>> RunWhisper(
-        string wavPath,
-        CancellationToken ct,
-        ProgressContext? progressContext = null
-    )
+    private async Task<Result<Srt>> RunWhisper(string wavPath, CancellationToken ct)
     {
         using var whisperFactory = WhisperFactory.FromPath(whisperModelPath);
         await using var processor = whisperFactory
@@ -167,41 +148,37 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             .WithLanguage("auto")
             .WithNoContext()
             .WithTemperature(0)
-            .WithSuppressRegex("")
             .Build();
         await using var fileStream = File.OpenRead(wavPath);
 
-        var max = (await FFProbe.AnalyseAsync(wavPath, cancellationToken: ct)).Duration;
-        var currentTask = progressContext?.AddTask($"[bold]Transcribing[/]", maxValue: 100);
+        var total = (await FFProbe.AnalyseAsync(wavPath, cancellationToken: ct)).Duration;
 
         var srt = new Srt();
 
         await foreach (var result in processor.ProcessAsync(fileStream, ct))
         {
-            currentTask?.Value = (result.End / max) * 100;
+            AnsiConsole.MarkupLine($"[dim][[{result.Start:G}->{result.End:G}]][/] {result.Text}");
+            srt.AddLine(result.Text, result.Start, result.End);
 
-            AnsiConsole.MarkupLine($"[[{result.Start:G}->{result.End:G}]] {result.Text}");
-            srt.AddLine(result.Text, result.Start.ToString(), result.End.ToString());
+            OnProgressChanged(
+                new ProgressEventHandler(
+                    (float)result.Start.TotalSeconds,
+                    (float)total.TotalSeconds,
+                    "Transcribing",
+                    false
+                )
+            );
 
             if (ct.IsCancellationRequested)
-            {
-                currentTask?.StopTask();
                 break;
-            }
         }
-
-        currentTask?.StopTask();
 
         return Result.Ok(srt);
     }
 
-    private Result<string> ToWhisperSupportedWav(
-        string inputFilePath,
-        ProgressContext? progressContext = null
-    )
+    private Result<string> ToWhisperSupportedWav(string inputFilePath)
     {
-        var progressTask = progressContext?.AddTask("[bold]Converting to WAV[/]");
-        progressTask?.IsIndeterminate = true;
+        OnProgressChanged(new ProgressEventHandler(0, 1, "Converting to WAV"));
 
         try
         {
@@ -228,12 +205,15 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             .WithLogLevel(FFMpegLogLevel.Quiet)
             .ProcessSynchronously();
 
-        progressTask?.StopTask();
-
         return Result.Ok(outputPath);
     }
 
-    private Result DownloadModel(IPath modelPath, ProgressContext? progressContext = null)
+    private void OnProgressChanged(ProgressEventHandler e)
+    {
+        ProgressChanged?.Invoke(this, e);
+    }
+
+    private Result DownloadModel(IPath modelPath)
     {
         var whisperModelDownloader = new WhisperModelDownloader();
         _logger.LogInformation($"Downloading \"{modelPath}\"");
@@ -245,8 +225,6 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
 
         try
         {
-            var task = progressContext?.AddTask($"Downloading model \"{modelPath.Basename}\"");
-            task?.IsIndeterminate = true;
             try
             {
                 var downloadTask = whisperModelDownloader.DownloadWhisperModel(
@@ -258,12 +236,10 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             catch (OperationCanceledException)
             {
                 AnsiConsole.MarkupLine("[red]Cancelled[/]");
-                task?.StopTask();
                 Console.CancelKeyPress -= handler;
                 throw;
             }
             Console.CancelKeyPress -= handler;
-            task?.StopTask();
 
             return Result.Ok();
         }

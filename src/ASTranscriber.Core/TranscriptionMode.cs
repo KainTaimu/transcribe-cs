@@ -4,4 +4,5 @@ public enum TranscriptionMode
 {
     Dummy,
     Whisper,
+    WhisperCli,
 }

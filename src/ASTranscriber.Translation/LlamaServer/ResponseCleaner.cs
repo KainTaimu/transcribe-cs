@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace ASTranscriber.Translation.SugoiLlama;
+namespace ASTranscriber.Translation.LlamaServer;
 
 public class ResponseCleaner
 {
