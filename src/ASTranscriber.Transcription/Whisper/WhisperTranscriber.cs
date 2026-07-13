@@ -1,6 +1,5 @@
 using ASTranscriber.Core;
 using EchoSharp.Abstractions.SpeechTranscription;
-using EchoSharp.Abstractions.VoiceActivityDetection;
 using EchoSharp.Audio;
 using EchoSharp.Onnx.SileroVad;
 using EchoSharp.SpeechTranscription;
@@ -12,7 +11,6 @@ using FluentResults;
 using Microsoft.Extensions.Logging;
 using NLog.Extensions.Logging;
 using PathLib;
-using Spectre.Console;
 using Subtitles;
 using Whisper.net;
 
@@ -21,7 +19,8 @@ namespace ASTranscriber.Transcription.Whisper;
 public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? sileroVadOptions)
     : ITranscriber
 {
-    public event EventHandler<ProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     private readonly ILogger<WhisperTranscriber> _logger = LoggerFactory
         .Create(builder => builder.SetMinimumLevel(LogLevel.Debug).AddNLog())
@@ -124,15 +123,20 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             var result = speechSegment.Segment;
             var end = result.StartTime + result.Duration;
 
-            AnsiConsole.MarkupLine($"[dim][[{result.StartTime:G}->{end:G}]][/] {result.Text}");
+            MessageReceived?.Invoke(
+                this,
+                new TaskMessageEventHandler(
+                    $"[dim][[{result.StartTime:G}->{end:G}]][/] {result.Text}"
+                )
+            );
             srt.AddLine(result.Text, result.StartTime, end);
 
             OnProgressChanged(
-                new ProgressEventHandler(
+                new TaskProgressEventHandler(
                     (float)result.StartTime.TotalSeconds,
                     (float)total.TotalSeconds,
                     "Transcribing",
-                    false
+                    isIndeterminate: false
                 )
             );
         }
@@ -157,15 +161,20 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
 
         await foreach (var result in processor.ProcessAsync(fileStream, ct))
         {
-            AnsiConsole.MarkupLine($"[dim][[{result.Start:G}->{result.End:G}]][/] {result.Text}");
+            MessageReceived?.Invoke(
+                this,
+                new TaskMessageEventHandler(
+                    $"[dim][[{result.Start:G}->{result.End:G}]][/] {result.Text}"
+                )
+            );
             srt.AddLine(result.Text, result.Start, result.End);
 
             OnProgressChanged(
-                new ProgressEventHandler(
+                new TaskProgressEventHandler(
                     (float)result.Start.TotalSeconds,
                     (float)total.TotalSeconds,
                     "Transcribing",
-                    false
+                    isIndeterminate: false
                 )
             );
 
@@ -178,7 +187,7 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
 
     private Result<string> ToWhisperSupportedWav(string inputFilePath)
     {
-        OnProgressChanged(new ProgressEventHandler(0, 1, "Converting to WAV"));
+        OnProgressChanged(new TaskProgressEventHandler(0, 1, "Converting to WAV"));
 
         try
         {
@@ -208,7 +217,7 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
         return Result.Ok(outputPath);
     }
 
-    private void OnProgressChanged(ProgressEventHandler e)
+    private void OnProgressChanged(TaskProgressEventHandler e)
     {
         ProgressChanged?.Invoke(this, e);
     }
@@ -235,7 +244,7 @@ public class WhisperTranscriber(string whisperModelPath, SileroVadOptions? siler
             }
             catch (OperationCanceledException)
             {
-                AnsiConsole.MarkupLine("[red]Cancelled[/]");
+                MessageReceived?.Invoke(this, new TaskMessageEventHandler("[red]Cancelled[/]"));
                 Console.CancelKeyPress -= handler;
                 throw;
             }

@@ -7,7 +7,8 @@ namespace ASTranscriber.Translation.Dummy;
 public class DummyTranslator : ITranslator
 {
 #pragma warning disable CS0067
-    public event EventHandler<ProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     public Result<ISubtitles> Translate(
         ISubtitles subtitles,

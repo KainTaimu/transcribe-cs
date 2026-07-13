@@ -6,7 +6,8 @@ namespace ASTranscriber.Translation;
 
 public interface ITranslator
 {
-    event EventHandler<ProgressEventHandler>? ProgressChanged;
+    event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     public Result<ISubtitles> Translate(
         ISubtitles subtitles,

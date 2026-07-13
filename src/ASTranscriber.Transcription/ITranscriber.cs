@@ -6,7 +6,8 @@ namespace ASTranscriber.Transcription;
 
 public interface ITranscriber
 {
-    event EventHandler<ProgressEventHandler>? ProgressChanged;
+    event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     public Result<ISubtitles> Transcribe(
         string fileName,

@@ -2,31 +2,31 @@
 
 public class Srt : ISubtitles
 {
-    public readonly List<SrtLine> Lines = [];
-    public int LineCount => Lines.Count;
+    private readonly List<SrtLine> _lines = [];
+    public int LineCount => _lines.Count;
 
-    public IEnumerator<SrtLine> GetEnumerator() => Lines.GetEnumerator();
+    public IEnumerator<SrtLine> GetEnumerator() => _lines.GetEnumerator();
 
     public void AddLine(string text, string start, string end)
     {
         var newLine = new SrtLine(text, LineCount + 1, start, end);
-        Lines.Add(newLine);
+        _lines.Add(newLine);
     }
 
     public void AddLine(string text, TimeSpan start, TimeSpan end)
     {
         var newLine = new SrtLine(text, LineCount + 1, start, end);
-        Lines.Add(newLine);
+        _lines.Add(newLine);
     }
 
     public void AddLine(SrtLine line)
     {
-        Lines.Add(line);
+        _lines.Add(line);
     }
 
     public void Read(string filename)
     {
-        Lines.Clear();
+        _lines.Clear();
         using var reader = new StreamReader(filename);
 
         while (reader.ReadLine() is { } line)
@@ -84,9 +84,8 @@ public class Srt : ISubtitles
 
     public void WriteFile(string filename)
     {
-        using var file = File.OpenWrite(filename);
-        using var writer = new StreamWriter(file);
-        foreach (var line in Lines)
+        using var writer = File.CreateText(filename);
+        foreach (var line in _lines)
         {
             writer.WriteLine(line);
         }

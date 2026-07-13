@@ -89,11 +89,12 @@ public class RunCommand(
             )
             .HideCompleted(true)
             .AutoClear(true)
-            .Start(ctx =>
+            .AutoRefresh(true)
+            .StartAsync(async ctx =>
             {
                 try
                 {
-                    RunTranscriber(
+                    await RunTranscriber(
                             data,
                             "outputs/",
                             transcriber,
@@ -101,7 +102,7 @@ public class RunCommand(
                             ctx,
                             cancellationToken
                         )
-                        .Wait(cancellationToken);
+                        .WaitAsync(cancellationToken);
                 }
                 catch (OperationCanceledException) { }
                 catch (AggregateException ex)
@@ -170,43 +171,77 @@ public class RunCommand(
     private static Result<ISubtitles> Transcribe(
         string input,
         ITranscriber transcriber,
-        ProgressContext? progress = null,
+        ProgressContext progress,
         CancellationToken cancellationToken = default
     )
     {
-        var transcribeProgress = progress?.AddTask("Transcribing...", maxValue: 100);
+        var transcribeProgress = progress.AddTask("Transcribing...", maxValue: 100);
+        HandleTranscriptionEvent(transcriber, transcribeProgress, progress);
+
+        var result = transcriber.Transcribe(input, cancellationToken);
+
+        transcribeProgress.StopTask();
+        return result;
+    }
+
+    private static void HandleTranscriptionEvent(
+        ITranscriber transcriber,
+        ProgressTask? transcribeProgress,
+        ProgressContext ctx
+    )
+    {
         transcriber.ProgressChanged += (_, e) =>
         {
             transcribeProgress?.Description = e.Description;
             transcribeProgress?.IsIndeterminate = e.IsIndeterminate;
             transcribeProgress?.Value = (e.Current / e.Total) * 100;
+            if (e.Message != null)
+                AnsiConsole.MarkupLine(Markup.Escape(e.Message));
+            ctx.Refresh();
         };
-
-        var result = transcriber.Transcribe(input, cancellationToken);
-
-        transcribeProgress?.StopTask();
-        return result;
+        transcriber.MessageReceived += (_, e) =>
+        {
+            AnsiConsole.MarkupLine(Markup.Escape(e.Message));
+            ctx.Refresh();
+        };
     }
 
     private static Result<ISubtitles> Translate(
         ISubtitles input,
         ITranslator translator,
-        ProgressContext? progress = null,
+        ProgressContext progress,
         CancellationToken cancellationToken = default
     )
     {
-        var translateTask = progress?.AddTask("Translating...", maxValue: 100);
+        var translateTask = progress.AddTask("Translating...", maxValue: 100);
+        HandleTranslatorEvents(translator, translateTask, progress);
+
+        var result = translator.Translate(input, cancellationToken);
+
+        translateTask.StopTask();
+        return result;
+    }
+
+    private static void HandleTranslatorEvents(
+        ITranslator translator,
+        ProgressTask? translateTask,
+        ProgressContext ctx
+    )
+    {
         translator.ProgressChanged += (_, e) =>
         {
             translateTask?.Description = e.Description;
             translateTask?.IsIndeterminate = e.IsIndeterminate;
             translateTask?.Value = (e.Current / e.Total) * 100;
+            if (e.Message != null)
+                AnsiConsole.MarkupLine(e.Message);
+            ctx.Refresh();
         };
-
-        var result = translator.Translate(input, cancellationToken);
-
-        translateTask?.StopTask();
-        return result;
+        translator.MessageReceived += (_, e) =>
+        {
+            AnsiConsole.MarkupLine(e.Message);
+            ctx.Refresh();
+        };
     }
 
     private ITranscriberOptions GetTranscriberOptions(RunSettings settings)

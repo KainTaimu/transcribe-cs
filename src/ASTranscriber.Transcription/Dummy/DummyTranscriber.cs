@@ -7,7 +7,8 @@ namespace ASTranscriber.Transcription.Dummy;
 public class DummyTranscriber : ITranscriber
 {
 #pragma warning disable CS0067
-    public event EventHandler<ProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     public Result<ISubtitles> Transcribe(
         string fileName,

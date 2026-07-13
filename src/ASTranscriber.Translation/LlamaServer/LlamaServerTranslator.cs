@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
@@ -8,7 +7,6 @@ using FluentResults;
 using Meziantou.Framework.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
-using Spectre.Console;
 using Subtitles;
 
 namespace ASTranscriber.Translation.LlamaServer;
@@ -23,7 +21,8 @@ public class LlamaServerTranslator(
         BaseAddress = new Uri("http://127.0.0.1:8080"),
     };
 
-    public event EventHandler<ProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     private Process? _llamaServer;
 
@@ -58,8 +57,12 @@ public class LlamaServerTranslator(
             const int maxTries = 3;
             while (!ResponseCleaner.IsTextValid(translation) && retries < maxTries)
             {
-                AnsiConsole.Markup(
-                    $"[dim][[{line.Start:g}->{line.End:g}]] [strikethrough]{translation.Replace("\n", " ")}[/][/]"
+                MessageReceived?.Invoke(
+                    this,
+                    new TaskMessageEventHandler(
+                        $"[dim][[{line.Start:G}->{line.End:G}]] [strikethrough]{translation
+                     .Replace("\n", " ")}[/][/]"
+                    )
                 );
                 translation = SendLine(line.Text, cancellationToken).Result;
                 retries++;
@@ -70,16 +73,20 @@ public class LlamaServerTranslator(
             translation = translation.Trim("\"").ToString();
 
             var translatedLine = new SrtLine(translation, line.LineNumber, line.Start, line.End);
-            var cleanedLine = Markup.Escape(translatedLine.Text.Replace("\n", " "));
-            AnsiConsole.MarkupLine($"[dim][[{line.Start:G}->{line.End:G}]][/] {cleanedLine}");
             outSrt.AddLine(translatedLine);
 
             OnProgressChanged(
-                new ProgressEventHandler(
+                new TaskProgressEventHandler(
                     translatedLine.LineNumber,
                     srt.LineCount,
                     "Translating",
-                    false
+                    isIndeterminate: false
+                )
+            );
+            MessageReceived?.Invoke(
+                this,
+                new TaskMessageEventHandler(
+                    $"[dim][[{line.Start:G}->{line.End:G}]][/] {translation.Replace("\n", " ")}"
                 )
             );
         }
@@ -135,6 +142,10 @@ public class LlamaServerTranslator(
 
     private void StartServer(CancellationToken cancellationToken = default)
     {
+        ProgressChanged?.Invoke(
+            this,
+            new TaskProgressEventHandler(0, 100, "Starting Llama server")
+        );
         try
         {
             var res = _client.GetAsync("health", cancellationToken);
@@ -197,11 +208,15 @@ public class LlamaServerTranslator(
         }
     }
 
-    private static async Task WaitForServerAsync(
+    private async Task WaitForServerAsync(
         int maxAttempts = 120,
         CancellationToken cancellationToken = default
     )
     {
+        ProgressChanged?.Invoke(
+            this,
+            new TaskProgressEventHandler(0, 100, "Waiting for Llama server")
+        );
         for (var i = 0; i < maxAttempts; i++)
         {
             await Task.Delay(250, cancellationToken);
@@ -220,7 +235,7 @@ public class LlamaServerTranslator(
         throw new TimeoutException("Server did not become ready in time.");
     }
 
-    private void OnProgressChanged(ProgressEventHandler e)
+    private void OnProgressChanged(TaskProgressEventHandler e)
     {
         ProgressChanged?.Invoke(this, e);
     }

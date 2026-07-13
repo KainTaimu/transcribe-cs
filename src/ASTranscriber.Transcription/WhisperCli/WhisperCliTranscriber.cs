@@ -2,21 +2,20 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using ASTranscriber.Core;
 using FluentResults;
-using Spectre.Console;
 using Subtitles;
 
 namespace ASTranscriber.Transcription.WhisperCli;
 
 public class WhisperCliTranscriber(WhisperCliTranscriberOptions options) : ITranscriber
 {
-    public event EventHandler<ProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     public Result<ISubtitles> Transcribe(
         string fileName,
         CancellationToken cancellationToken = default
     )
     {
-        ProgressChanged?.Invoke(this, new ProgressEventHandler(0, 100, "Transcribing"));
         var outputPath = Path.Join(Path.GetTempPath(), Path.GetFileNameWithoutExtension(fileName));
 
         var args = new List<string>();
@@ -48,11 +47,9 @@ public class WhisperCliTranscriber(WhisperCliTranscriberOptions options) : ITran
 
         var cliPath = Environment.GetEnvironmentVariable("WHISPERCLI") ?? "whisper-cli";
 
-        var ct = new CancellationTokenSource();
-
-        var processTask = RunProcessAsync(cliPath, args, ct.Token);
-        ProgressChanged?.Invoke(this, new ProgressEventHandler(-1, -1, "Translating"));
-        processTask.Wait(ct.Token);
+        var processTask = RunProcessAsync(cliPath, args, cancellationToken);
+        ProgressChanged?.Invoke(this, new TaskProgressEventHandler(0, 100, "Transcribing"));
+        processTask.Wait(cancellationToken);
         if (processTask.Result.IsFailed)
             return processTask.Result;
 
@@ -111,18 +108,25 @@ public class WhisperCliTranscriber(WhisperCliTranscriberOptions options) : ITran
                     {
                         process.Kill();
                         failReason = "unknown language";
-                        return;
+                        continue;
                     }
                     if (line.StartsWith("error:"))
                     {
                         process.Kill();
                         failReason = line;
-                        return;
+                        continue;
                     }
+                    if (!line.StartsWith("whisper_print_progress_callback:"))
+                        continue;
                     var percent = line[45..^1];
                     ProgressChanged?.Invoke(
                         this,
-                        new ProgressEventHandler(int.Parse(percent), 100, "Transcribing", false)
+                        new TaskProgressEventHandler(
+                            int.Parse(percent),
+                            100,
+                            "Transcribing",
+                            isIndeterminate: false
+                        )
                     );
                 }
             },
@@ -134,7 +138,7 @@ public class WhisperCliTranscriber(WhisperCliTranscriberOptions options) : ITran
 
         await foreach (var line in channel.Reader.ReadAllAsync(cancellationToken))
         {
-            AnsiConsole.WriteLine(line);
+            MessageReceived?.Invoke(this, new TaskMessageEventHandler(line));
         }
 
         await process.WaitForExitAsync(cancellationToken);

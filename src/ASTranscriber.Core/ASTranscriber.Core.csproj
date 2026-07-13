@@ -7,6 +7,5 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="FluentResults" Version="4.0.0" />
-    <PackageReference Include="PathLib" Version="0.9.8" />
   </ItemGroup>
 </Project>

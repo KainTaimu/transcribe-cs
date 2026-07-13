@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using ASTranscriber.Core;
 using FluentResults;
-using Spectre.Console;
 using Subtitles;
 
 namespace ASTranscriber.Translation;
@@ -11,7 +10,8 @@ public class SugoiTranslator(string sugoiModelPath) : ITranslator
 {
     private string SugoiModelPath { get; } = sugoiModelPath;
 
-    public event EventHandler<ProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskProgressEventHandler>? ProgressChanged;
+    public event EventHandler<TaskMessageEventHandler>? MessageReceived;
 
     public Result<ISubtitles> Translate(
         ISubtitles subtitles,
@@ -45,7 +45,7 @@ public class SugoiTranslator(string sugoiModelPath) : ITranslator
             cancellationToken
         );
 
-        ProgressChanged?.Invoke(this, new ProgressEventHandler(-1, -1, "Translating"));
+        ProgressChanged?.Invoke(this, new TaskProgressEventHandler(-1, -1, "Translating"));
 
         processTask.Wait(cancellationToken);
 
@@ -54,7 +54,7 @@ public class SugoiTranslator(string sugoiModelPath) : ITranslator
         return Result.Ok<ISubtitles>(outSrt);
     }
 
-    private static async Task RunProcessAsync(
+    private async Task RunProcessAsync(
         string fileName,
         IList<string> arguments,
         CancellationToken cancellationToken = default
@@ -99,7 +99,7 @@ public class SugoiTranslator(string sugoiModelPath) : ITranslator
 
         await foreach (var line in channel.Reader.ReadAllAsync(cancellationToken))
         {
-            AnsiConsole.WriteLine(line);
+            MessageReceived?.Invoke(this, new TaskMessageEventHandler(line));
         }
 
         await process.WaitForExitAsync(cancellationToken);
